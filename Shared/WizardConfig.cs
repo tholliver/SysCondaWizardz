@@ -38,13 +38,11 @@ public class WizardConfig
     public bool EnableBackups { get; set; } = true;
     public string PgDumpPath { get; set; } = PostgresBinaryLocator.FindPgDumpPath();
     public string PgRestorePath { get; set; } = PostgresBinaryLocator.FindPgRestorePath();
-    public int KeepFiles { get; set; } = 10;
-    public string BackupTime { get; set; } = "18:30";
+    public string BackupTimeMorning { get; set; } = "06:00";   // morning snapshot
+    public string BackupTime { get; set; } = "18:30";          // evening snapshot
     public string BackupDays { get; set; } = "MON,TUE,WED,THU,FRI";
-    public string TaskSchedulerTaskName { get; set; } = AppProfile.TaskName;
     public bool RestoreDatabaseOnInstall { get; set; } = false;
     public string RestoreDumpPath { get; set; } = "";
-    // Testing
     public bool BackupTestMode { get; set; } = false;
 
     // ── Derived paths (all rooted under RootDirectory) ───────────────────────

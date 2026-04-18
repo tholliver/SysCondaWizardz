@@ -107,55 +107,70 @@ public class Step5_Install : IWizardStep
             int done = 0;
             void Tick() { done++; SetProgress((int)(done * 100.0 / total)); }
 
-            // 1 ── Install bun under RootDirectory\bun\ (SYSTEM-visible) ──────
-            Log("\n[1/x] Instalando bun...", LogLevel.Step);
+            // 1 ── Verify PostgreSQL credentials & connectivity ─────────────
+            Log("\n[1/x] Verificando conexion a PostgreSQL...", LogLevel.Step);
+            await VerifyPostgresCredentials();
+            Tick();
+
+            // 2 ── Ensure database exists, create if not ───────────────────
+            Log("\n[2/x] Verificando base de datos...", LogLevel.Step);
+            await EnsureDatabaseExists();
+            Tick();
+
+            // 3 ── Install bun ─────────────────────────────────────────────
+            Log("\n[3/x] Instalando bun...", LogLevel.Step);
             await InstallBunAsync();
             Tick();
 
-            // 2 ── Extract / copy project source into RootDirectory\app\ ──────
-            Log("\n[2/x] Preparando código fuente...", LogLevel.Step);
+            // 4 ── Extract / copy project source ──────────────────────────
+            Log("\n[4/x] Preparando código fuente...", LogLevel.Step);
             await PrepareSourceAsync();
             Tick();
 
-            // 3 ── Write .env ──────────────────────────────────────────────────
-            Log("\n[3/x] Escribiendo .env...", LogLevel.Step);
+            // 5 ── Write .env ──────────────────────────────────────────────
+            Log("\n[5/x] Escribiendo .env...", LogLevel.Step);
             var envPath = Path.Combine(_cfg.AppDirectory, ".env");
             _cfg.BetterAuthSecret = ResolveBetterAuthSecret(envPath);
             await File.WriteAllTextAsync(envPath, _cfg.EnvFileContent());
             Log($"  ✓ {envPath}", LogLevel.Ok);
             Tick();
 
-            // 4 ── bun install ─────────────────────────────────────────────────
-            Log("\n[4/x] Instalando dependencias (bun install)...", LogLevel.Step);
+            // 6 ── bun install ─────────────────────────────────────────────
+            Log("\n[6/x] Instalando dependencias (bun install)...", LogLevel.Step);
             await RunCmd(_cfg.BunExePath, "install", _cfg.AppDirectory);
             Tick();
 
-            // 5 ── bun run build ───────────────────────────────────────────────
-            Log("\n[5/x] Compilando app Astro/Bun (bun run build)...", LogLevel.Step);
+            // 7 ── Run Drizzle migrations (schema push) ────────────────────
+            Log("\n[7/x] Aplicando esquema de base de datos (drizzle)...", LogLevel.Step);
+            await RunDrizzleMigrations();
+            Tick();
+
+            // 8 ── bun run build ───────────────────────────────────────────
+            Log("\n[8/x] Compilando app Astro/Bun (bun run build)...", LogLevel.Step);
             await RunCmd(_cfg.BunExePath, "run build", _cfg.AppDirectory);
             EnsureBuildOutput();
             Tick();
 
-            // 6 ── (optional) Restore DB ───────────────────────────────────────
+            // 9 ── (optional) Restore DB ───────────────────────────────────
             if (_cfg.RestoreDatabaseOnInstall)
             {
-                Log("\n[6/x] Restaurando base de datos...", LogLevel.Step);
+                Log("\n[9/x] Restaurando base de datos...", LogLevel.Step);
                 await RestoreDatabaseIfAvailable();
                 Tick();
             }
 
-            // 7 ── (optional) Windows service ─────────────────────────────────
+            // 10 ── (optional) Windows service ────────────────────────────
             if (_cfg.InstallAsService)
             {
-                Log("\n[7/x] Instalando servicio de Windows...", LogLevel.Step);
+                Log("\n[10/x] Instalando servicio de Windows...", LogLevel.Step);
                 InstallWindowsService();
                 Tick();
             }
 
-            // 8 ── (optional) Backup scheduled task ───────────────────────────
+            // 11 ── (optional) Backup config ──────────────────────────────
             if (_cfg.EnableBackups)
             {
-                Log("\n[8/x] Creando script de backup y tarea programada...", LogLevel.Step);
+                Log("\n[11/x] Configurando backup automatico...", LogLevel.Step);
                 await SetupBackup();
                 Tick();
             }
@@ -179,6 +194,165 @@ public class Step5_Install : IWizardStep
         {
             _started = false;
             UpdateActionState();
+        }
+    }
+
+    // ── Step 1: Verify PostgreSQL credentials ─────────────────────────────────
+
+    private async Task VerifyPostgresCredentials()
+    {
+        var psqlDir = Path.GetDirectoryName(_cfg.PgDumpPath) ?? "";
+        var psql = Path.Combine(psqlDir, "psql.exe");
+
+        if (!File.Exists(psql))
+        {
+            Log($"  ! psql.exe no encontrado en {psqlDir} — omitiendo verificación.", LogLevel.Warn);
+            return;
+        }
+
+        if (!File.Exists(_cfg.PgDumpPath))
+            throw new Exception(
+                $"pg_dump.exe no encontrado en:\n{_cfg.PgDumpPath}\n" +
+                "Verifica que PostgreSQL 18 esté instalado.");
+
+        Log($"  Conectando a {_cfg.DbHost}:{_cfg.DbPort} como '{_cfg.DbUser}'...", LogLevel.Info);
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = psql,
+            // Connect to postgres (system db) to test credentials without needing our DB yet
+            Arguments = $"-h {_cfg.DbHost} -p {_cfg.DbPort} -U {_cfg.DbUser} -d postgres -c \"SELECT version()\" -t -q",
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        psi.Environment["PGPASSWORD"] = _cfg.DbPassword;
+        psi.Environment["PGCONNECT_TIMEOUT"] = "10";
+
+        using var proc = Process.Start(psi)!;
+        var stdout = await proc.StandardOutput.ReadToEndAsync();
+        var stderr = await proc.StandardError.ReadToEndAsync();
+        await proc.WaitForExitAsync();
+
+        if (proc.ExitCode != 0)
+            throw new Exception(
+                $"No se pudo conectar a PostgreSQL.\n" +
+                $"Host: {_cfg.DbHost}:{_cfg.DbPort} | Usuario: {_cfg.DbUser}\n" +
+                $"Error: {stderr.Trim()}\n\n" +
+                "Verifica host, puerto, usuario y contraseña en el paso anterior.");
+
+        var version = stdout.Trim();
+        Log($"  ✓ Conectado: {version}", LogLevel.Ok);
+    }
+
+    // ── Step 2: Ensure DB exists ──────────────────────────────────────────────
+
+    private async Task EnsureDatabaseExists()
+    {
+        var psqlDir = Path.GetDirectoryName(_cfg.PgDumpPath) ?? "";
+        var psql = Path.Combine(psqlDir, "psql.exe");
+        var createdb = Path.Combine(psqlDir, "createdb.exe");
+
+        if (!File.Exists(psql))
+        {
+            Log("  ! psql.exe no encontrado — omitiendo verificación de BD.", LogLevel.Warn);
+            return;
+        }
+
+        // Check if DB already exists
+        var psiCheck = new ProcessStartInfo
+        {
+            FileName = psql,
+            Arguments = $"-h {_cfg.DbHost} -p {_cfg.DbPort} -U {_cfg.DbUser} -d postgres" +
+                        $" -t -c \"SELECT 1 FROM pg_database WHERE datname='{_cfg.DbName}'\"",
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        psiCheck.Environment["PGPASSWORD"] = _cfg.DbPassword;
+
+        using var checkProc = Process.Start(psiCheck)!;
+        var checkOut = await checkProc.StandardOutput.ReadToEndAsync();
+        await checkProc.WaitForExitAsync();
+
+        if (checkOut.Trim() == "1")
+        {
+            Log($"  ✓ Base de datos '{_cfg.DbName}' ya existe.", LogLevel.Ok);
+            return;
+        }
+
+        // Create it
+        Log($"  Creando base de datos '{_cfg.DbName}'...", LogLevel.Info);
+
+        if (!File.Exists(createdb))
+            throw new Exception($"createdb.exe no encontrado en {psqlDir}");
+
+        var psiCreate = new ProcessStartInfo
+        {
+            FileName = createdb,
+            Arguments = $"-h {_cfg.DbHost} -p {_cfg.DbPort} -U {_cfg.DbUser}" +
+                        $" --encoding=UTF8 --locale=en_US.UTF-8 {_cfg.DbName}",
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        psiCreate.Environment["PGPASSWORD"] = _cfg.DbPassword;
+
+        using var createProc = Process.Start(psiCreate)!;
+        var createErr = await createProc.StandardError.ReadToEndAsync();
+        await createProc.WaitForExitAsync();
+
+        if (createProc.ExitCode != 0)
+            throw new Exception(
+                $"No se pudo crear la base de datos '{_cfg.DbName}'.\n" +
+                $"Error: {createErr.Trim()}");
+
+        Log($"  ✓ Base de datos '{_cfg.DbName}' creada con encoding UTF8.", LogLevel.Ok);
+    }
+
+    // ── Step 7: Drizzle migrations ────────────────────────────────────────────
+
+    private async Task RunDrizzleMigrations()
+    {
+        // drizzle-kit push applies schema without needing migration files
+        // Works for fresh installs AND updates (idempotent)
+        var drizzleConfig = Path.Combine(_cfg.AppDirectory, "drizzle.config.ts");
+        var drizzleConfigJs = Path.Combine(_cfg.AppDirectory, "drizzle.config.js");
+
+        if (!File.Exists(drizzleConfig) && !File.Exists(drizzleConfigJs))
+        {
+            Log("  ! drizzle.config.ts no encontrado — omitiendo migraciones.", LogLevel.Warn);
+            Log("    Si tu app usa Drizzle, agrega drizzle.config.ts a la raíz del proyecto.", LogLevel.Warn);
+            return;
+        }
+
+        Log("  Ejecutando drizzle-kit push (aplicar esquema)...", LogLevel.Info);
+
+        // Set DATABASE_URL env for drizzle to connect
+        var env = new Dictionary<string, string>
+        {
+            ["DATABASE_URL"] = _cfg.DatabaseUrl,
+            ["DB_HOST"] = _cfg.DbHost,
+            ["DB_PORT"] = _cfg.DbPort,
+            ["DB_NAME"] = _cfg.DbName,
+            ["DB_USER"] = _cfg.DbUser,
+            ["DB_PASSWORD"] = _cfg.DbPassword,
+        };
+
+        try
+        {
+            // Use bun to run drizzle-kit push with auto-accept (--force skips confirmation prompts)
+            await RunCmd(_cfg.BunExePath, "run drizzle-kit push --force", _cfg.AppDirectory, env);
+            Log("  ✓ Esquema aplicado correctamente.", LogLevel.Ok);
+        }
+        catch (Exception ex)
+        {
+            // Migration failure is non-fatal on reinstall — schema may already exist
+            Log($"  ! drizzle-kit push: {ex.Message}", LogLevel.Warn);
+            Log("    Continuando — si es reinstalación el esquema ya existe.", LogLevel.Warn);
         }
     }
 
@@ -208,8 +382,6 @@ public class Step5_Install : IWizardStep
             RedirectStandardError = true,
             CreateNoWindow = true,
         };
-
-        // Force bun installer to land in our root dir instead of %USERPROFILE%\.bun
         psi.Environment["BUN_INSTALL"] = bunDir;
 
         using var proc = new Process { StartInfo = psi };
@@ -220,8 +392,6 @@ public class Step5_Install : IWizardStep
         proc.BeginErrorReadLine();
         await proc.WaitForExitAsync();
 
-        // Bun installer puts the binary at $BUN_INSTALL\bin\bun.exe — copy
-        // it one level up so our hardcoded BunExePath (<root>\bun\bun.exe) works.
         var inBin = Path.Combine(bunDir, "bin", "bun.exe");
         if (File.Exists(inBin) && !File.Exists(bunExe))
         {
@@ -242,25 +412,20 @@ public class Step5_Install : IWizardStep
         switch (_cfg.AppSource)
         {
             case AppSourceKind.ExistingDirectory:
-                // "ExistingDirectory" means embedded source in this wizard
                 Log("  Extrayendo fuente embebida...", LogLevel.Info);
                 EnsureDirectoryReady(_cfg.AppDirectory, allowExistingProject: true);
                 await EmbeddedSourceExtractor.ExtractToAsync(_cfg.AppDirectory);
                 Log($"  ✓ Fuente extraída en: {_cfg.AppDirectory}", LogLevel.Ok);
                 break;
-
             case AppSourceKind.ZipArchive:
                 await ExtractZipSourceAsync();
                 break;
-
             case AppSourceKind.GitRepository:
                 await CloneRepositoryAsync();
                 break;
-
             default:
                 throw new Exception("Origen de aplicación no soportado.");
         }
-
         ValidateProjectFiles();
     }
 
@@ -284,7 +449,6 @@ public class Step5_Install : IWizardStep
         {
             try { Directory.Delete(tempRoot, recursive: true); } catch { }
         }
-
         await Task.CompletedTask;
     }
 
@@ -343,10 +507,6 @@ public class Step5_Install : IWizardStep
         Log($"  ✓ Build SSR lista: {entryMjs}", LogLevel.Ok);
     }
 
-    /// <summary>
-    /// Copies sourceDir → destDir excluding folders that must not be deployed.
-    /// node_modules and dist are regenerated at install time by bun.
-    /// </summary>
     private static void CopyDirectory(string sourceDir, string destDir)
     {
         var excluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -402,7 +562,7 @@ public class Step5_Install : IWizardStep
         {
             ServiceName = _cfg.ServiceName,
             AppDirectory = _cfg.AppDirectory,
-            BunExecutable = _cfg.BunExePath,       // always system-wide path
+            BunExecutable = _cfg.BunExePath,
             EntryPoint = entryMjs,
             EnvFilePath = Path.Combine(_cfg.AppDirectory, ".env"),
             LogDirectory = _cfg.ServiceLogDirectory,
@@ -411,7 +571,7 @@ public class Step5_Install : IWizardStep
         };
 
         TryStopAndDeleteService(_cfg.ServiceName);
-        Thread.Sleep(1500); // let SCM fully finish removing the old registration
+        Thread.Sleep(1500);
 
         File.WriteAllText(
             _cfg.ServiceConfigPath,
@@ -426,18 +586,15 @@ public class Step5_Install : IWizardStep
               "binPath=", binPath,
               "DisplayName=", _cfg.ServiceDisplayName);
 
-        RunSc("description", _cfg.ServiceName, _cfg.ServiceDisplayName + " — Astro SSR host");
+        RunSc("description", _cfg.ServiceName, _cfg.ServiceDisplayName + " - Astro SSR host");
 
         RunSc("failure", _cfg.ServiceName,
               "reset=", "86400",
               "actions=", "restart/5000/restart/5000/restart/5000");
 
-        // Required so SCM actually applies the failure actions above
         RunSc("failureflag", _cfg.ServiceName, "1");
 
-        // Give SCM time after create before starting (slow disks / AV scans)
         Thread.Sleep(3000);
-
         RunSc("start", _cfg.ServiceName);
 
         Log($"  ✓ Servicio '{_cfg.ServiceName}' instalado e iniciado.", LogLevel.Ok);
@@ -454,10 +611,7 @@ public class Step5_Install : IWizardStep
         {
             var targetPath = Path.Combine(_cfg.ServiceRuntimeDirectory, Path.GetFileName(file));
             if (string.Equals(Path.GetFullPath(file), Path.GetFullPath(targetPath), StringComparison.OrdinalIgnoreCase))
-            {
                 continue;
-            }
-
             File.Copy(file, targetPath, overwrite: true);
         }
 
@@ -474,10 +628,6 @@ public class Step5_Install : IWizardStep
         try { RunSc("delete", name); } catch { }
     }
 
-    /// <summary>
-    /// Calls sc.exe via ArgumentList — no cmd.exe in the middle,
-    /// no shell quoting layer to mangle paths with spaces.
-    /// </summary>
     private void RunSc(params string[] args)
     {
         var psi = new ProcessStartInfo
@@ -506,7 +656,8 @@ public class Step5_Install : IWizardStep
     {
         Directory.CreateDirectory(_cfg.BackupDirectory);
         _cfg.Save();
-        Log($"  ✓ Configuracion de backup guardada.", LogLevel.Ok);
+        Log("  ✓ Configuracion de backup guardada.", LogLevel.Ok);
+        await Task.CompletedTask;
     }
 
     // ── DB restore ────────────────────────────────────────────────────────────
@@ -585,30 +736,9 @@ public class Step5_Install : IWizardStep
             throw new Exception($"'{exe} {args}' falló con código {proc.ExitCode}");
     }
 
-    private void RunSync(string exe, string args)
-    {
-        var psi = new ProcessStartInfo
-        {
-            FileName = exe,
-            Arguments = args,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-        };
-        using var p = Process.Start(psi) ?? throw new Exception($"No se pudo iniciar: {exe}");
-        var stdout = p.StandardOutput.ReadToEnd();
-        var stderr = p.StandardError.ReadToEnd();
-        p.WaitForExit();
-        if (!string.IsNullOrWhiteSpace(stdout)) Log("  " + stdout.TrimEnd(), LogLevel.Info);
-        if (!string.IsNullOrWhiteSpace(stderr)) Log("  " + stderr.TrimEnd(), LogLevel.Warn);
-        if (p.ExitCode != 0)
-            throw new Exception($"'{exe} {args}' falló con código {p.ExitCode}");
-    }
-
     private int CountSteps()
     {
-        int n = 5; // bun + source + .env + bun install + bun build
+        int n = 7; // pg check + db ensure + bun + source + .env + bun install + drizzle + build
         if (_cfg.RestoreDatabaseOnInstall) n++;
         if (_cfg.InstallAsService) n++;
         if (_cfg.EnableBackups) n++;

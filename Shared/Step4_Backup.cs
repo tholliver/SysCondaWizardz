@@ -1,21 +1,19 @@
 namespace SysCondaWizard;
 
-/// <summary>Step 4 — schedule pg_dump via Windows Task Scheduler (replaces cron).</summary>
+/// <summary>Step 4 — configure pg_dump backup schedule run by the Windows Service.</summary>
 public class Step4_Backup : IWizardStep
 {
     public string Title => "Backup automático (pg_dump)";
 
-    // Testing mode
     private CheckBox _chkTestMode = new();
-    private Panel _rowTime = new();
+    private Panel _rowTime1 = new();
+    private Panel _rowTime2 = new();
     private Panel _rowDays = new();
-    // All native
     private CheckBox _chkEnable = new();
     private TextBox _txtPgDump = new();
-    private TextBox _txtTime = new();
-    private NumericUpDown _numKeep = new();
+    private TextBox _txtTimeMorning = new();
+    private TextBox _txtTimeEvening = new();
     private CheckBox[] _dayChecks = Array.Empty<CheckBox>();
-    private TextBox _txtTaskName = new();
     private CheckBox _chkRestoreOnInstall = new();
     private TextBox _txtPgRestore = new();
     private TextBox _txtRestoreDump = new();
@@ -32,8 +30,8 @@ public class Step4_Backup : IWizardStep
 
         WizardUi.SectionLabel(root, "Backup automático de PostgreSQL");
         WizardUi.Hint(root,
-            "Crea una tarea en el Programador de tareas de Windows que ejecuta pg_dump\n" +
-            "de forma nativa, sin necesidad de PM2 ni cron.");
+            "El servicio de Windows ejecuta pg_dump directamente — sin PowerShell ni tareas programadas.\n" +
+            "Retención: 7 copias diarias + 4 semanales + 3 mensuales (automatico).");
 
         _chkEnable = new CheckBox
         {
@@ -46,6 +44,7 @@ public class Step4_Backup : IWizardStep
 
         _detailPanel = new Panel { Visible = cfg.EnableBackups };
 
+        // Backup directory (read-only info)
         var rowBackupDir = MakeRow("Carpeta de backups");
         _lblBackupDir = new Label
         {
@@ -57,6 +56,7 @@ public class Step4_Backup : IWizardStep
         rowBackupDir.Controls.Add(_lblBackupDir);
         WizardUi.AddRow(_detailPanel, rowBackupDir);
 
+        // PG detection
         var rowDetect = MakeRow("PostgreSQL 18.x");
         _lblPgStatus = new Label
         {
@@ -74,16 +74,29 @@ public class Step4_Backup : IWizardStep
         AddBrowseField(_detailPanel, "Ruta de pg_dump.exe", ref _txtPgDump,
             cfg.PgDumpPath, isFolder: false, filter: "pg_dump.exe|pg_dump.exe");
 
-        var rowTime = MakeRow("Hora del backup");
-        _txtTime = WizardUi.TextBox(cfg.BackupTime, "18:30");
-        _txtTime.Width = 80;
-        _txtTime.Location = new Point(168, 2);
-        var hintTime = new Label { Text = "(formato HH:mm, hora local)", Location = new Point(256, 6), AutoSize = true, ForeColor = Color.Gray };
-        rowTime.Controls.Add(_txtTime);
-        rowTime.Controls.Add(hintTime);
-        _rowTime = rowTime;
-        WizardUi.AddRow(_detailPanel, rowTime);
+        // Morning backup time
+        var rowTime1 = MakeRow("Backup madrugada");
+        _txtTimeMorning = WizardUi.TextBox(cfg.BackupTimeMorning, "06:00");
+        _txtTimeMorning.Width = 80;
+        _txtTimeMorning.Location = new Point(168, 2);
+        var hintTime1 = new Label { Text = "(HH:mm — snapshot nocturno)", Location = new Point(256, 6), AutoSize = true, ForeColor = Color.Gray };
+        rowTime1.Controls.Add(_txtTimeMorning);
+        rowTime1.Controls.Add(hintTime1);
+        _rowTime1 = rowTime1;
+        WizardUi.AddRow(_detailPanel, rowTime1);
 
+        // Evening backup time
+        var rowTime2 = MakeRow("Backup tarde");
+        _txtTimeEvening = WizardUi.TextBox(cfg.BackupTime, "18:30");
+        _txtTimeEvening.Width = 80;
+        _txtTimeEvening.Location = new Point(168, 2);
+        var hintTime2 = new Label { Text = "(HH:mm — snapshot fin de jornada)", Location = new Point(256, 6), AutoSize = true, ForeColor = Color.Gray };
+        rowTime2.Controls.Add(_txtTimeEvening);
+        rowTime2.Controls.Add(hintTime2);
+        _rowTime2 = rowTime2;
+        WizardUi.AddRow(_detailPanel, rowTime2);
+
+        // Days
         var rowDays = MakeRow("Días");
         rowDays.Height = 32;
         var dayFlow = new FlowLayoutPanel
@@ -117,6 +130,7 @@ public class Step4_Backup : IWizardStep
         _rowDays = rowDays;
         WizardUi.AddRow(_detailPanel, rowDays);
 
+        // Test mode
         var rowTest = MakeRow(string.Empty);
         _chkTestMode = new CheckBox
         {
@@ -128,22 +142,37 @@ public class Step4_Backup : IWizardStep
         };
         rowTest.Controls.Add(_chkTestMode);
         WizardUi.AddRow(_detailPanel, rowTest);
-        _chkTestMode.CheckedChanged += (_, _) => ToggleTestMode();
 
-        var rowKeep = MakeRow("Conservar últimos N");
-        _numKeep = new NumericUpDown { Minimum = 1, Maximum = 99, Value = cfg.KeepFiles, Width = 60, Location = new Point(168, 2) };
-        var hintKeep = new Label { Text = "archivos de backup", Location = new Point(234, 6), AutoSize = true, ForeColor = Color.Gray };
-        rowKeep.Controls.Add(_numKeep);
-        rowKeep.Controls.Add(hintKeep);
-        WizardUi.AddRow(_detailPanel, rowKeep);
+        var rowTestWarn = MakeRow(string.Empty);
+        var lblTestWarn = new Label
+        {
+            Text = "⚠ Desactiva antes de entregar al cliente",
+            Location = new Point(168, 3),
+            AutoSize = true,
+            ForeColor = Color.FromArgb(180, 60, 60),
+            Font = new Font("Segoe UI", 8f, FontStyle.Italic),
+        };
+        rowTestWarn.Controls.Add(lblTestWarn);
+        WizardUi.AddRow(_detailPanel, rowTestWarn);
+        _chkTestMode.CheckedChanged += (_, _) =>
+        {
+            lblTestWarn.Visible = _chkTestMode.Checked;
+            ToggleTestMode();
+        };
 
-        var rowTask = MakeRow("Nombre tarea");
-        _txtTaskName = WizardUi.TextBox(cfg.TaskSchedulerTaskName);
-        _txtTaskName.Width = 260;
-        _txtTaskName.Location = new Point(168, 2);
-        rowTask.Controls.Add(_txtTaskName);
-        WizardUi.AddRow(_detailPanel, rowTask);
+        // Retention info (replaces editable keep N — tiered is automatic)
+        var rowRetention = MakeRow("Retención diaria");
+        var lblRetention = new Label
+        {
+            Text = "7 días  +  4 semanas  +  3 meses  (automatico)",
+            Location = new Point(168, 6),
+            AutoSize = true,
+            ForeColor = Color.FromArgb(34, 120, 60),
+        };
+        rowRetention.Controls.Add(lblRetention);
+        WizardUi.AddRow(_detailPanel, rowRetention);
 
+        // Restore section
         var rowRestore = MakeRow(string.Empty);
         _chkRestoreOnInstall = new CheckBox
         {
@@ -165,7 +194,7 @@ public class Step4_Backup : IWizardStep
 
         _restoreHint = new Label
         {
-            Text = "Si se deja vacío, el instalador intentará usar el dump más reciente del directorio de backups.",
+            Text = "Si se deja vacío, el instalador usará el dump más reciente del directorio de backups.",
             AutoSize = true,
             ForeColor = Color.Gray,
             Location = new Point(168, 0)
@@ -174,19 +203,23 @@ public class Step4_Backup : IWizardStep
         restoreHintRow.Controls.Add(_restoreHint);
         WizardUi.AddRow(_detailPanel, restoreHintRow);
 
-        _detailPanel.Height = 330;
+        _detailPanel.Height = 380;
         WizardUi.AddRow(root, _detailPanel);
+
         _chkEnable.CheckedChanged += (_, _) => _detailPanel.Visible = _chkEnable.Checked;
         _chkRestoreOnInstall.CheckedChanged += (_, _) => ToggleRestoreFields();
+
         RefreshDetectedPostgresPaths();
         ToggleRestoreFields();
+        lblTestWarn.Visible = cfg.BackupTestMode;
         ToggleTestMode();
 
         WizardUi.InfoBox(root,
-            "🗄  Los backups se guardan en formato .dump (pg_restore compatible).\n" +
-            "   El Programador de tareas de Windows los lanza con tu sesión de usuario.\n" +
-            "   La carpeta de backups siempre será <instalación>\\backups.\n" +
-            "   Solo se admite PostgreSQL 18.x. Si no existe dump para restaurar, la instalación sigue sin fallar.");
+            "🗄  Backups en formato .dump (pg_restore compatible).\n" +
+            "   Ejecutados por el servicio de Windows — sin dependencias externas.\n" +
+            "   2 snapshots diarios: madrugada + fin de jornada.\n" +
+            "   Retención automatica: 7 diarios, 4 semanales, 3 mensuales.\n" +
+            "   Solo se admite PostgreSQL 18.x.");
 
         return root;
     }
@@ -202,13 +235,13 @@ public class Step4_Backup : IWizardStep
     private void ToggleTestMode()
     {
         var isTest = _chkTestMode.Checked;
-        _rowTime.Visible = !isTest;
+        _rowTime1.Visible = !isTest;
+        _rowTime2.Visible = !isTest;
         _rowDays.Visible = !isTest;
     }
 
     private void RefreshDetectedPostgresPaths()
     {
-
         var binDir = PostgresBinaryLocator.FindBinDirectory();
         if (!string.IsNullOrWhiteSpace(binDir))
         {
@@ -218,7 +251,6 @@ public class Step4_Backup : IWizardStep
             _lblPgStatus.ForeColor = Color.FromArgb(34, 120, 60);
             return;
         }
-
         _lblPgStatus.Text = "No se encontraron binarios válidos de PostgreSQL 18.x";
         _lblPgStatus.ForeColor = Color.FromArgb(180, 90, 40);
     }
@@ -266,12 +298,20 @@ public class Step4_Backup : IWizardStep
         if (!_chkEnable.Checked) return null;
         if (!PostgresBinaryLocator.IsSupportedBinaryPath(_txtPgDump.Text, "pg_dump.exe"))
             return $"No se encontró pg_dump.exe de PostgreSQL 18 en:\n{_txtPgDump.Text}";
-        if (!System.Text.RegularExpressions.Regex.IsMatch(_txtTime.Text.Trim(), @"^\d{1,2}:\d{2}$"))
-            return "Hora inválida. Usa formato HH:mm (ej. 18:30).";
-        if (!_dayChecks.Any(c => c.Checked)) return "Selecciona al menos un día para el backup.";
-        if (string.IsNullOrWhiteSpace(_txtTaskName.Text)) return "El nombre de la tarea es requerido.";
+
+        if (!_chkTestMode.Checked)
+        {
+            if (!System.Text.RegularExpressions.Regex.IsMatch(_txtTimeMorning.Text.Trim(), @"^\d{1,2}:\d{2}$"))
+                return "Hora de madrugada inválida. Usa formato HH:mm (ej. 06:00).";
+            if (!System.Text.RegularExpressions.Regex.IsMatch(_txtTimeEvening.Text.Trim(), @"^\d{1,2}:\d{2}$"))
+                return "Hora de tarde inválida. Usa formato HH:mm (ej. 18:30).";
+            if (!_dayChecks.Any(c => c.Checked))
+                return "Selecciona al menos un día para el backup.";
+        }
+
         if (_chkRestoreOnInstall.Checked && !PostgresBinaryLocator.IsSupportedBinaryPath(_txtPgRestore.Text, "pg_restore.exe"))
             return $"No se encontró pg_restore.exe de PostgreSQL 18 en:\n{_txtPgRestore.Text}";
+
         return null;
     }
 
@@ -281,10 +321,9 @@ public class Step4_Backup : IWizardStep
         if (!cfg.EnableBackups) return;
 
         cfg.PgDumpPath = _txtPgDump.Text.Trim();
-        cfg.BackupTime = _txtTime.Text.Trim();
+        cfg.BackupTimeMorning = _txtTimeMorning.Text.Trim();
+        cfg.BackupTime = _txtTimeEvening.Text.Trim();
         cfg.BackupTestMode = _chkTestMode.Checked;
-        cfg.KeepFiles = (int)_numKeep.Value;
-        cfg.TaskSchedulerTaskName = _txtTaskName.Text.Trim();
         cfg.RestoreDatabaseOnInstall = _chkRestoreOnInstall.Checked;
         cfg.PgRestorePath = _txtPgRestore.Text.Trim();
         cfg.RestoreDumpPath = _txtRestoreDump.Text.Trim();
@@ -293,5 +332,6 @@ public class Step4_Backup : IWizardStep
         var checkedDays = new List<string>();
         for (int i = 0; i < _dayChecks.Length; i++)
             if (_dayChecks[i].Checked) checkedDays.Add(dayMap[i]);
+        cfg.BackupDays = string.Join(",", checkedDays);
     }
 }
