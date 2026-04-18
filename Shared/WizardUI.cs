@@ -11,6 +11,7 @@ public static class WizardUi
     private static readonly Color InfoBg       = Color.FromArgb(238, 242, 255);
     private static readonly Color InfoBorder   = Color.FromArgb(180, 190, 240);
     private const int DefaultContentWidth = 660;
+    private const int MinContentWidth = 260;
 
     /// <summary>Creates the scrollable root panel every step uses as its container.</summary>
     public static Panel MakeScrollPanel()
@@ -172,7 +173,7 @@ public static class WizardUi
             return;
         }
 
-        var availableWidth = Math.Max(DefaultContentWidth, parent.ClientSize.Width - parent.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth - 8);
+        var availableWidth = Math.Max(MinContentWidth, parent.ClientSize.Width - parent.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth - 8);
 
         if (child is Panel or RichTextBox)
         {
@@ -181,9 +182,18 @@ public static class WizardUi
             return;
         }
 
-        if (child.Width <= 0 || child.Width > availableWidth)
+        if (child.Width <= 0)
+        {
+            child.Width = Math.Min(DefaultContentWidth, availableWidth);
+            return;
+        }
+
+        if (child.Width > availableWidth)
         {
             child.Width = availableWidth;
         }
     }
 }
+
+
+

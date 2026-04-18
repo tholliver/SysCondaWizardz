@@ -21,10 +21,10 @@ public class Step3_Service : IWizardStep
 
         _chkInstall = new CheckBox
         {
-            Text = $"Instalar {AppProfile.AppName} como servicio de Windows",   // ← AppProfile
-            Checked = cfg.InstallAsService,
+            Text     = $"Instalar {AppProfile.AppName} como servicio de Windows",
+            Checked  = cfg.InstallAsService,
             AutoSize = true,
-            Margin = new Padding(0, 8, 0, 4),
+            Margin   = new Padding(0, 8, 0, 4),
         };
         WizardUi.AddRow(root, _chkInstall);
 
@@ -34,24 +34,24 @@ public class Step3_Service : IWizardStep
         var row = new Panel { Height = 28, Margin = new Padding(0, 3, 0, 0) };
         var lbl = new Label
         {
-            Text = "Reintento tras fallo (s):",
-            Width = 160,
+            Text      = "Reintento tras fallo (s):",
+            Width     = 160,
             TextAlign = ContentAlignment.MiddleRight,
-            Location = new Point(0, 4)
+            Location  = new Point(0, 4)
         };
         _numRestartDelay = new NumericUpDown
         {
-            Minimum = 1,
-            Maximum = 120,
-            Value = cfg.ServiceRestartDelaySeconds,
-            Width = 80,
+            Minimum  = 1,
+            Maximum  = 120,
+            Value    = cfg.ServiceRestartDelaySeconds,
+            Width    = 80,
             Location = new Point(168, 2)
         };
         var hint = new Label
         {
-            Text = "reinicio del proceso Bun tras salida inesperada",
-            Location = new Point(256, 6),
-            AutoSize = true,
+            Text      = "reinicio del proceso Bun tras salida inesperada",
+            Location  = new Point(256, 6),
+            AutoSize  = true,
             ForeColor = Color.Gray
         };
         row.Controls.Add(lbl);
@@ -76,8 +76,8 @@ public class Step3_Service : IWizardStep
     {
         var row = new Panel { Height = 28, Margin = new Padding(0, 3, 0, 0) };
         var lbl = new Label { Text = label + ":", Width = 160, TextAlign = ContentAlignment.MiddleRight, Location = new Point(0, 4) };
-        tb = WizardUi.TextBox(value);
-        tb.Width = 340;
+        tb          = WizardUi.TextBox(value);
+        tb.Width    = 340;
         tb.Location = new Point(168, 2);
         row.Controls.Add(lbl);
         row.Controls.Add(tb);
@@ -93,9 +93,9 @@ public class Step3_Service : IWizardStep
 
     public void Save(WizardConfig cfg)
     {
-        cfg.InstallAsService = _chkInstall.Checked;
-        cfg.ServiceName = _txtName.Text.Trim();
-        cfg.ServiceDisplayName = $"{AppProfile.AppName} ({cfg.ServiceName})";   // ← AppProfile
+        cfg.InstallAsService           = _chkInstall.Checked;
+        cfg.ServiceName                = _txtName.Text.Trim();
+        cfg.ServiceDisplayName         = $"{AppProfile.AppName} ({cfg.ServiceName})";
         cfg.ServiceRestartDelaySeconds = (int)_numRestartDelay.Value;
     }
 }

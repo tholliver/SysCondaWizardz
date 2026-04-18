@@ -46,13 +46,13 @@ public class WizardConfig
     public string RestoreDumpPath { get; set; } = "";
 
     // ── Derived paths (all rooted under RootDirectory) ───────────────────────
-    public string BunDirectory => Path.Combine(RootDirectory, "bun");
-    public string BunExePath => Path.Combine(BunDirectory, "bun.exe");
-    public string AppDirectory => Path.Combine(RootDirectory, "app");
+    public string BunDirectory            => Path.Combine(RootDirectory, "bun");
+    public string BunExePath              => Path.Combine(BunDirectory, "bun.exe");
+    public string AppDirectory            => Path.Combine(RootDirectory, "app");
     public string ServiceRuntimeDirectory => Path.Combine(RootDirectory, "runtime");
-    public string ServiceConfigPath => Path.Combine(ServiceRuntimeDirectory, "service-config.json");
-    public string ServiceLogDirectory => Path.Combine(RootDirectory, "logs");
-    public string BackupDirectory => Path.Combine(RootDirectory, "backups");
+    public string ServiceConfigPath       => Path.Combine(ServiceRuntimeDirectory, "service-config.json");
+    public string ServiceLogDirectory     => Path.Combine(RootDirectory, "logs");
+    public string BackupDirectory         => Path.Combine(RootDirectory, "backups");
 
     // ── Env file ─────────────────────────────────────────────────────────────
     public string DatabaseUrl =>

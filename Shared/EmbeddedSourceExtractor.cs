@@ -9,24 +9,18 @@ namespace SysCondaWizard;
 /// </summary>
 internal static class EmbeddedSourceExtractor
 {
-    private static string Prefix => AppProfile.EmbedPrefix;   // ← AppProfile
+    private static string Prefix => AppProfile.EmbedPrefix;
 
-    // Keep ResourceName for backward compat with the validation check in Step1_Location
     public static string ResourceName => Prefix;
 
-    /// <summary>Returns true if the exe contains at least one embedded source file.</summary>
     public static bool IsAvailable =>
         Assembly.GetExecutingAssembly()
                 .GetManifestResourceNames()
                 .Any(n => n.StartsWith(Prefix, StringComparison.OrdinalIgnoreCase));
 
-    /// <summary>
-    /// Writes every embedded source file into <paramref name="destDir"/>,
-    /// preserving the original directory structure.
-    /// </summary>
     public static async Task ExtractToAsync(string destDir)
     {
-        var asm = Assembly.GetExecutingAssembly();
+        var asm       = Assembly.GetExecutingAssembly();
         var resources = asm.GetManifestResourceNames()
                            .Where(n => n.StartsWith(Prefix, StringComparison.OrdinalIgnoreCase))
                            .ToList();
@@ -42,10 +36,8 @@ internal static class EmbeddedSourceExtractor
         {
             var relativePath = resourceName[Prefix.Length..]
                 .Replace('/', Path.DirectorySeparatorChar);
-
             var targetPath = Path.Combine(destDir, relativePath);
             Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
-
             using var stream = asm.GetManifestResourceStream(resourceName)!;
             await using var fs = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.None);
             await stream.CopyToAsync(fs);

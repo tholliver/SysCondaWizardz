@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -6,21 +6,23 @@
     <Nullable>enable</Nullable>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
-    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationManifest>..\Shared\app.manifest</ApplicationManifest>
+    <AssemblyName>SysCondaWizard</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.6" />
   </ItemGroup>
 
+  <!-- Link all shared source files — no copying, no duplication -->
+  <ItemGroup>
+    <Compile Include="..\Shared\**\*.cs" />
+  </ItemGroup>
+
   <!--
     ══════════════════════════════════════════════════════════════════
-    PER-APP CONFIG — change these two properties for each new app.
-    Everything else stays untouched.
-
-    SysCondaSourceDir  → absolute path to your Astro project on disk.
-    AppEmbedPrefix     → must exactly match AppProfile.EmbedPrefix
-                         in AppProfile.cs (without trailing slash).
+    CHANGE THESE TWO LINES when building for a different app.
+    AppEmbedPrefix must match AppProfile.EmbedPrefix (no trailing slash).
     ══════════════════════════════════════════════════════════════════
   -->
   <PropertyGroup>
@@ -28,22 +30,14 @@
     <AppEmbedPrefix>sysconda-source</AppEmbedPrefix>
   </PropertyGroup>
 
-  <Target Name="ValidateSysCondaSource" BeforeTargets="BeforeBuild">
-    <Error
-      Condition="!Exists('$(SysCondaSourceDir)')"
-      Text="SysCondaSourceDir path does not exist: $(SysCondaSourceDir)" />
-    <Error
-      Condition="!Exists('$(SysCondaSourceDir)\package.json')"
-      Text="SysCondaSourceDir does not look like an Astro/Bun project (no package.json): $(SysCondaSourceDir)" />
-    <Message Text="✓ Source found: $(SysCondaSourceDir) [prefix: $(AppEmbedPrefix)]" Importance="high" />
+  <Target Name="ValidateSource" BeforeTargets="BeforeBuild">
+    <Error Condition="!Exists('$(SysCondaSourceDir)')"
+           Text="SysCondaSourceDir not found: $(SysCondaSourceDir)" />
+    <Error Condition="!Exists('$(SysCondaSourceDir)\package.json')"
+           Text="$(SysCondaSourceDir) is not an Astro/Bun project (no package.json)" />
+    <Message Text="✓ Source: $(SysCondaSourceDir) [prefix: $(AppEmbedPrefix)]" Importance="high" />
   </Target>
 
-  <!--
-    Embed every file from the source dir directly as a resource.
-    Excluded: node_modules, .git, dist, .env
-    LogicalName: $(AppEmbedPrefix)/<relative-path>
-    EmbeddedSourceExtractor reads these by AppProfile.EmbedPrefix at runtime.
-  -->
   <ItemGroup>
     <EmbeddedResource
       Include="$(SysCondaSourceDir)\**\*"

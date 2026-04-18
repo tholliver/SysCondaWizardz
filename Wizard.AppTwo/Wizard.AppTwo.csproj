@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationManifest>..\Shared\app.manifest</ApplicationManifest>
+    <AssemblyName>AppTwoWizard</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.6" />
+  </ItemGroup>
+
+  <!-- Link all shared source files — no copying, no duplication -->
+  <ItemGroup>
+    <Compile Include="..\Shared\**\*.cs" />
+  </ItemGroup>
+
+  <!--
+    ══════════════════════════════════════════════════════════════════
+    CHANGE THESE TWO LINES for your app source.
+    AppEmbedPrefix must match AppProfile.EmbedPrefix (no trailing slash).
+    ══════════════════════════════════════════════════════════════════
+  -->
+  <PropertyGroup>
+    <SysCondaSourceDir>C:\path\to\your\apptwo</SysCondaSourceDir>
+    <AppEmbedPrefix>apptwo-source</AppEmbedPrefix>
+  </PropertyGroup>
+
+  <Target Name="ValidateSource" BeforeTargets="BeforeBuild">
+    <Error Condition="!Exists('$(SysCondaSourceDir)')"
+           Text="SysCondaSourceDir not found: $(SysCondaSourceDir)" />
+    <Error Condition="!Exists('$(SysCondaSourceDir)\package.json')"
+           Text="$(SysCondaSourceDir) is not an Astro/Bun project (no package.json)" />
+    <Message Text="✓ Source: $(SysCondaSourceDir) [prefix: $(AppEmbedPrefix)]" Importance="high" />
+  </Target>
+
+  <ItemGroup>
+    <EmbeddedResource
+      Include="$(SysCondaSourceDir)\**\*"
+      Exclude="$(SysCondaSourceDir)\node_modules\**;$(SysCondaSourceDir)\.git\**;$(SysCondaSourceDir)\dist\**;$(SysCondaSourceDir)\.env">
+      <LogicalName>$(AppEmbedPrefix)/%(RecursiveDir)%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+</Project>

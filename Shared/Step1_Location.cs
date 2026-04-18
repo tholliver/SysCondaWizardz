@@ -20,7 +20,7 @@ public class Step1_Location : IWizardStep
 
         WizardUi.SectionLabel(root, "Origen del proyecto");
         WizardUi.Hint(root,
-            "El wizard incluye el código de sys.conda dentro del propio ejecutable.\n" +
+            $"El wizard incluye el código de {AppProfile.AppName} dentro del propio ejecutable.\n" +
             "Puedes instalarlo directamente desde ahí, o usar un ZIP/repositorio Git externo.");
 
         _rbEmbed = CreateSourceRadio("Usar fuente embebida (recomendado)", cfg.AppSource == AppSourceKind.ExistingDirectory);
@@ -42,7 +42,7 @@ public class Step1_Location : IWizardStep
         _gitPanel = new Panel { Height = 88, Margin = new Padding(0, 8, 0, 0), Visible = cfg.AppSource == AppSourceKind.GitRepository };
         WizardUi.SectionLabel(_gitPanel, "Repositorio Git");
         WizardUi.Hint(_gitPanel, "Clona el proyecto en la carpeta destino y construye con Bun.");
-        _txtGitUrl = WizardUi.TextBox(cfg.GitRepoUrl, "https://github.com/usuario/sys.conda.git");
+        _txtGitUrl = WizardUi.TextBox(cfg.GitRepoUrl, $"https://github.com/usuario/{AppProfile.ServiceName}.git");
         WizardUi.AddRow(_gitPanel, _txtGitUrl);
         WizardUi.AddRow(root, _gitPanel);
 
@@ -54,7 +54,7 @@ public class Step1_Location : IWizardStep
             "  <raíz>\\app\\          — proyecto Astro\n" +
             "  <raíz>\\logs\\         — logs del servicio\n" +
             "  <raíz>\\backups\\      — backups de PostgreSQL\n\n" +
-            "Recomendado: C:\\sys.conda");
+            $"Recomendado: {AppProfile.DefaultRootDir}");
 
         WizardUi.AddRow(root, BuildFolderRow(cfg.RootDirectory, path =>
         {

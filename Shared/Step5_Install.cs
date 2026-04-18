@@ -10,6 +10,7 @@ public class Step5_Install : IWizardStep
     public string Title => "Instalación";
     public bool IsRunning => _started;
     public bool HasCompleted { get; private set; }
+    public bool HasAttempted { get; private set; }
     public event Action? StateChanged;
 
     private RichTextBox _log = new();
@@ -22,7 +23,10 @@ public class Step5_Install : IWizardStep
     {
         _cfg = cfg;
 
-        var root = new Panel();
+        var root = new Panel
+        {
+            Padding = new Padding(0, 0, 0, 8),
+        };
 
         _progress = new ProgressBar
         {
@@ -35,6 +39,12 @@ public class Step5_Install : IWizardStep
         };
         root.Controls.Add(_progress);
 
+        var logHost = new Panel
+        {
+            Dock = DockStyle.Fill,
+            Padding = new Padding(0, 12, 0, 0),
+        };
+
         _log = new RichTextBox
         {
             Dock = DockStyle.Fill,
@@ -45,12 +55,13 @@ public class Step5_Install : IWizardStep
             ScrollBars = RichTextBoxScrollBars.Vertical,
             BorderStyle = BorderStyle.None,
         };
-        root.Controls.Add(_log);
+        logHost.Controls.Add(_log);
+        root.Controls.Add(logHost);
 
         var btnRow = new Panel { Dock = DockStyle.Top, Height = 44, Padding = new Padding(0, 6, 0, 0) };
         _btnRun = new Button
         {
-            Text = HasCompleted ? "Instalación completada" : _started ? "Instalando..." : "▶  Iniciar instalación",
+            Text = GetRunButtonText(),
             Width = 220,
             Height = 32,
             FlatStyle = FlatStyle.Flat,
@@ -64,10 +75,12 @@ public class Step5_Install : IWizardStep
         btnRow.Controls.Add(_btnRun);
         root.Controls.Add(btnRow);
 
-        Log("sys.conda Windows Setup Wizard", LogLevel.Header);
+        Log(AppProfile.WizardTitle, LogLevel.Header);
         Log(HasCompleted
             ? "Instalación finalizada. Puedes cerrar el wizard.\n"
-            : "Pulsa ▶ Iniciar instalación para comenzar.\n", LogLevel.Info);
+            : HasAttempted
+                ? "La instalación anterior no terminó. Revisa el log y vuelve a intentarlo.\n"
+                : "Pulsa ▶ Iniciar instalación para comenzar.\n", LogLevel.Info);
         Log($"  Raíz        : {cfg.RootDirectory}", LogLevel.Info);
         Log($"  Bun         : {cfg.BunExePath}", LogLevel.Info);
         Log($"  App         : {cfg.AppDirectory}", LogLevel.Info);
@@ -84,6 +97,7 @@ public class Step5_Install : IWizardStep
     {
         if (_started || HasCompleted) return;
 
+        HasAttempted = true;
         _started = true;
         UpdateActionState();
 
@@ -159,6 +173,7 @@ public class Step5_Install : IWizardStep
         catch (Exception ex)
         {
             Log($"\n❌  ERROR: {ex.Message}", LogLevel.Error);
+            Log("  Puedes corregir el problema y volver a intentar la instalación.", LogLevel.Warn);
         }
         finally
         {
@@ -255,7 +270,7 @@ public class Step5_Install : IWizardStep
             throw new Exception("No se encontró el archivo ZIP configurado.");
 
         EnsureDirectoryReady(_cfg.AppDirectory, allowExistingProject: false);
-        var tempRoot = Path.Combine(Path.GetTempPath(), $"sysconda-{Guid.NewGuid():N}");
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"{AppProfile.ServiceName}-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempRoot);
 
         try
@@ -395,15 +410,15 @@ public class Step5_Install : IWizardStep
             RestartDelaySeconds = _cfg.ServiceRestartDelaySeconds,
         };
 
+        TryStopAndDeleteService(_cfg.ServiceName);
+        Thread.Sleep(1500); // let SCM fully finish removing the old registration
+
         File.WriteAllText(
             _cfg.ServiceConfigPath,
             JsonSerializer.Serialize(serviceConfig, new JsonSerializerOptions { WriteIndented = true }));
         Log($"  ✓ Config escrita en {_cfg.ServiceConfigPath}", LogLevel.Ok);
 
         var serviceExe = DeployServiceRuntime();
-
-        TryStopAndDeleteService(_cfg.ServiceName);
-        Thread.Sleep(1500); // let SCM fully finish removing the old registration
 
         var binPath = $"{serviceExe} --service {_cfg.ServiceConfigPath}";
         RunSc("create", _cfg.ServiceName,
@@ -433,14 +448,23 @@ public class Step5_Install : IWizardStep
         Directory.CreateDirectory(_cfg.ServiceRuntimeDirectory);
         var sourceExe = Application.ExecutablePath;
         var sourceDir = Path.GetDirectoryName(sourceExe)!;
+        var deployedExe = Path.Combine(_cfg.ServiceRuntimeDirectory, Path.GetFileName(sourceExe));
 
         foreach (var file in Directory.GetFiles(sourceDir))
-            File.Copy(file,
-                Path.Combine(_cfg.ServiceRuntimeDirectory, Path.GetFileName(file)),
-                overwrite: true);
+        {
+            var targetPath = Path.Combine(_cfg.ServiceRuntimeDirectory, Path.GetFileName(file));
+            if (string.Equals(Path.GetFullPath(file), Path.GetFullPath(targetPath), StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
 
-        var deployedExe = Path.Combine(_cfg.ServiceRuntimeDirectory, Path.GetFileName(sourceExe));
-        Log($"  ✓ Runtime desplegado en {deployedExe}", LogLevel.Ok);
+            File.Copy(file, targetPath, overwrite: true);
+        }
+
+        Log(string.Equals(Path.GetFullPath(sourceExe), Path.GetFullPath(deployedExe), StringComparison.OrdinalIgnoreCase)
+                ? $"  ✓ Runtime ya en uso desde {deployedExe}"
+                : $"  ✓ Runtime desplegado en {deployedExe}",
+            LogLevel.Ok);
         return deployedExe;
     }
 
@@ -622,12 +646,16 @@ public class Step5_Install : IWizardStep
             RunOnUi(_btnRun, () =>
             {
                 _btnRun.Enabled = !_started && !HasCompleted;
-                _btnRun.Text = HasCompleted ? "Instalación completada"
-                                : _started ? "Instalando..."
-                                               : "▶  Iniciar instalación";
+                _btnRun.Text = GetRunButtonText();
             });
         StateChanged?.Invoke();
     }
+
+    private string GetRunButtonText() =>
+        HasCompleted ? "Instalación completada"
+        : _started ? "Instalando..."
+        : HasAttempted ? "↻  Reintentar instalación"
+        : "▶  Iniciar instalación";
 
     private enum LogLevel { Header, Step, Ok, Info, Warn, Error }
 
@@ -663,3 +691,5 @@ public class Step5_Install : IWizardStep
     public string? Validate(WizardConfig cfg) => null;
     public void Save(WizardConfig cfg) => _cfg = cfg;
 }
+
+
