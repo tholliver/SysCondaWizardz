@@ -210,6 +210,12 @@ public sealed class BackupScheduler : IDisposable
         var target = DateTime.Today
             .AddHours(int.Parse(parts[0]))
             .AddMinutes(int.Parse(parts[1]));
+
+        // If missed by less than 10 minutes, fire in 30s instead of waiting 24h
+        var diff = DateTime.Now - target;
+        if (diff > TimeSpan.Zero && diff < TimeSpan.FromMinutes(10))
+            return TimeSpan.FromSeconds(30);
+
         if (target <= DateTime.Now) target = target.AddDays(1);
         return target - DateTime.Now;
     }
