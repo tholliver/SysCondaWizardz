@@ -41,7 +41,7 @@ public class WizardForm : Form
 
     private void InitializeForm()
     {
-        Text = "sys.conda — Setup Wizard";
+        Text = AppProfile.WizardTitle;          // ← AppProfile
         Size = new Size(980, 680);
         MinimumSize = new Size(760, 560);
         StartPosition = FormStartPosition.CenterScreen;
@@ -88,9 +88,7 @@ public class WizardForm : Form
         _btnCancel.Click += (_, _) =>
         {
             if (Confirm("¿Cancelar la instalación?"))
-            {
                 Close();
-            }
         };
         _btnBack.Click += (_, _) => Navigate(-1);
         _btnNext.Click += async (_, _) => await HandleNextAsync();
@@ -167,9 +165,7 @@ public class WizardForm : Form
     private void Navigate(int delta)
     {
         if (_installStep.IsRunning)
-        {
             return;
-        }
 
         _currentStep = Math.Clamp(_currentStep + delta, 0, _steps.Length - 1);
         LoadStep(_currentStep);
@@ -193,9 +189,7 @@ public class WizardForm : Form
     private void RefreshNavigationState()
     {
         if (IsDisposed)
-        {
             return;
-        }
 
         if (InvokeRequired)
         {
@@ -226,7 +220,7 @@ public class WizardForm : Form
         MessageBox.Show(msg, "Validación", MessageBoxButtons.OK, MessageBoxIcon.Warning);
 
     private static bool Confirm(string msg) =>
-        MessageBox.Show(msg, "sys.conda Wizard", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
+        MessageBox.Show(msg, $"{AppProfile.AppName} Wizard", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;  // ← AppProfile
 }
 
 internal class StepsBar : Control
@@ -238,22 +232,14 @@ internal class StepsBar : Control
     public string[] Names
     {
         get => _names;
-        set
-        {
-            _names = value ?? Array.Empty<string>();
-            Invalidate();
-        }
+        set { _names = value ?? Array.Empty<string>(); Invalidate(); }
     }
 
     [DefaultValue(0)]
     public int Active
     {
         get => _active;
-        set
-        {
-            _active = value;
-            Invalidate();
-        }
+        set { _active = value; Invalidate(); }
     }
 
     private static readonly Color Done = Color.FromArgb(79, 70, 229);
@@ -271,10 +257,7 @@ internal class StepsBar : Control
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
-        if (Names.Length == 0)
-        {
-            return;
-        }
+        if (Names.Length == 0) return;
 
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
@@ -287,15 +270,11 @@ internal class StepsBar : Control
         var segmentWidth = Names.Length == 1 ? 0 : (endX - startX) / (Names.Length - 1);
 
         using (var trackPen = new Pen(Idle, 6f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
-        {
             g.DrawLine(trackPen, startX, lineY, endX, lineY);
-        }
 
         var progressX = startX + Math.Max(0, Math.Min(Active, Names.Length - 1)) * segmentWidth;
         using (var progressPen = new Pen(Done, 6f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
-        {
             g.DrawLine(progressPen, startX, lineY, progressX, lineY);
-        }
 
         using var activeFont = new Font("Segoe UI Semibold", 8.5f);
         using var idleFont = new Font("Segoe UI", 8.5f);
@@ -306,9 +285,7 @@ internal class StepsBar : Control
             var x = startX + i * segmentWidth;
             var markerColor = i <= Active ? Done : Idle;
             using (var markerBrush = new SolidBrush(markerColor))
-            {
                 g.FillEllipse(markerBrush, x - 5, lineY - 5, 10, 10);
-            }
 
             var labelRect = new RectangleF(x - 70, lineY + 10, 140, rect.Height - 20);
             var labelBrush = new SolidBrush(i == Active ? Current : i < Active ? Done : Color.FromArgb(130, 135, 155));

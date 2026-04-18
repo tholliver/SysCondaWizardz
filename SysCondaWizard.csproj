@@ -15,14 +15,17 @@
 
   <!--
     ══════════════════════════════════════════════════════════════════
-    EMBEDDED SOURCE CONFIG
-    Only change SysCondaSourceDir to point at your Astro project.
-    All files (excluding node_modules / .git / dist / .env) are
-    embedded directly into the exe — no zip step, no temp files.
+    PER-APP CONFIG — change these two properties for each new app.
+    Everything else stays untouched.
+
+    SysCondaSourceDir  → absolute path to your Astro project on disk.
+    AppEmbedPrefix     → must exactly match AppProfile.EmbedPrefix
+                         in AppProfile.cs (without trailing slash).
     ══════════════════════════════════════════════════════════════════
   -->
   <PropertyGroup>
     <SysCondaSourceDir>C:\Users\DaMagic\Documents\.levi\sys.conda</SysCondaSourceDir>
+    <AppEmbedPrefix>sysconda-source</AppEmbedPrefix>
   </PropertyGroup>
 
   <Target Name="ValidateSysCondaSource" BeforeTargets="BeforeBuild">
@@ -32,21 +35,20 @@
     <Error
       Condition="!Exists('$(SysCondaSourceDir)\package.json')"
       Text="SysCondaSourceDir does not look like an Astro/Bun project (no package.json): $(SysCondaSourceDir)" />
-    <Message Text="✓ sys.conda source found: $(SysCondaSourceDir)" Importance="high" />
+    <Message Text="✓ Source found: $(SysCondaSourceDir) [prefix: $(AppEmbedPrefix)]" Importance="high" />
   </Target>
 
   <!--
     Embed every file from the source dir directly as a resource.
-    Excluded folders: node_modules, .git, dist
-    Excluded files:   .env
-    LogicalName pattern: sysconda-source/<relative-path>
-    EmbeddedSourceExtractor reads these by prefix at runtime.
+    Excluded: node_modules, .git, dist, .env
+    LogicalName: $(AppEmbedPrefix)/<relative-path>
+    EmbeddedSourceExtractor reads these by AppProfile.EmbedPrefix at runtime.
   -->
   <ItemGroup>
     <EmbeddedResource
       Include="$(SysCondaSourceDir)\**\*"
       Exclude="$(SysCondaSourceDir)\node_modules\**;$(SysCondaSourceDir)\.git\**;$(SysCondaSourceDir)\dist\**;$(SysCondaSourceDir)\.env">
-      <LogicalName>sysconda-source/%(RecursiveDir)%(Filename)%(Extension)</LogicalName>
+      <LogicalName>$(AppEmbedPrefix)/%(RecursiveDir)%(Filename)%(Extension)</LogicalName>
     </EmbeddedResource>
   </ItemGroup>
 

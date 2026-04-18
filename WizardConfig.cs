@@ -11,17 +11,7 @@ public enum AppSourceKind
 public class WizardConfig
 {
     // ── Step 1: Install root + source ────────────────────────────────────────
-    /// <summary>
-    /// Single root directory — everything is installed under here.
-    ///
-    ///   C:\sys.conda\
-    ///   ├── bun\bun.exe      ← installed by wizard, visible to SYSTEM
-    ///   ├── app\             ← Astro project (extracted from embedded zip)
-    ///   ├── logs\            ← service stdout / stderr
-    ///   ├── backups\         ← pg_dump files
-    ///   └── runtime\         ← copy of this exe used by the SCM
-    /// </summary>
-    public string RootDirectory { get; set; } = @"C:\sys.conda";
+    public string RootDirectory { get; set; } = AppProfile.DefaultRootDir;
     public AppSourceKind AppSource { get; set; } = AppSourceKind.ExistingDirectory;
     public string SourceZipPath { get; set; } = "";
     public string GitRepoUrl { get; set; } = "";
@@ -29,18 +19,18 @@ public class WizardConfig
     // ── Step 2: Environment (.env) ───────────────────────────────────────────
     public string DbHost { get; set; } = "localhost";
     public string DbPort { get; set; } = "5432";
-    public string DbName { get; set; } = "conda_db";
-    public string DbUser { get; set; } = "postgres";
+    public string DbName { get; set; } = AppProfile.DbName;
+    public string DbUser { get; set; } = AppProfile.DbUser;
     public string DbPassword { get; set; } = "";
-    public string AppUrl { get; set; } = "http://localhost:4321/";
-    public string AppPort { get; set; } = "4321";
+    public string AppUrl { get; set; } = $"http://localhost:{AppProfile.DefaultAppPort}/";
+    public string AppPort { get; set; } = AppProfile.DefaultAppPort.ToString();
     public string BetterAuthSecret { get; set; } = "";
     public string RateLimitWindow { get; set; } = "900";
     public string MaxAttempts { get; set; } = "5";
 
     // ── Step 3: Service ──────────────────────────────────────────────────────
-    public string ServiceName { get; set; } = "sysconda";
-    public string ServiceDisplayName { get; set; } = "sys.conda App";
+    public string ServiceName { get; set; } = AppProfile.ServiceName;
+    public string ServiceDisplayName { get; set; } = AppProfile.ServiceDisplay;
     public bool InstallAsService { get; set; } = true;
     public int ServiceRestartDelaySeconds { get; set; } = 5;
 
@@ -51,7 +41,7 @@ public class WizardConfig
     public int KeepFiles { get; set; } = 10;
     public string BackupTime { get; set; } = "18:30";
     public string BackupDays { get; set; } = "MON,TUE,WED,THU,FRI";
-    public string TaskSchedulerTaskName { get; set; } = "sysconda_pg_backup";
+    public string TaskSchedulerTaskName { get; set; } = AppProfile.TaskName;
     public bool RestoreDatabaseOnInstall { get; set; } = false;
     public string RestoreDumpPath { get; set; } = "";
 

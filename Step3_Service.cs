@@ -21,7 +21,7 @@ public class Step3_Service : IWizardStep
 
         _chkInstall = new CheckBox
         {
-            Text = "Instalar sys.conda como servicio de Windows",
+            Text = $"Instalar {AppProfile.AppName} como servicio de Windows",   // ← AppProfile
             Checked = cfg.InstallAsService,
             AutoSize = true,
             Margin = new Padding(0, 8, 0, 4),
@@ -67,7 +67,7 @@ public class Step3_Service : IWizardStep
             "El wizard copiará un host de servicio .NET dentro de la carpeta de la app,\n" +
             "lo registrará con sc.exe y configurará recuperación automática del servicio.\n\n" +
             "El proceso lanzado será:\n" +
-            "bun run dist/server/entry.mjs   (NODE_ENV=production, HOST=0.0.0.0, PORT=" + cfg.AppPort + ")");
+            $"bun run dist/server/entry.mjs   (NODE_ENV=production, HOST=0.0.0.0, PORT={cfg.AppPort})");
 
         return root;
     }
@@ -95,7 +95,7 @@ public class Step3_Service : IWizardStep
     {
         cfg.InstallAsService = _chkInstall.Checked;
         cfg.ServiceName = _txtName.Text.Trim();
-        cfg.ServiceDisplayName = $"sys.conda ({cfg.ServiceName})";
+        cfg.ServiceDisplayName = $"{AppProfile.AppName} ({cfg.ServiceName})";   // ← AppProfile
         cfg.ServiceRestartDelaySeconds = (int)_numRestartDelay.Value;
     }
 }

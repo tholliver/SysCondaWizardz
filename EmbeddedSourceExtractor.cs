@@ -3,26 +3,18 @@ using System.Reflection;
 namespace SysCondaWizard;
 
 /// <summary>
-/// Extracts the Astro project files that were embedded directly into this exe
-/// at build time via the EmbeddedResource glob in the csproj.
-///
-/// Each file is stored as a resource with a logical name like:
-///   sysconda-source/src/pages/index.astro
-///   sysconda-source/package.json
-///   sysconda-source/astro.config.mjs
-///
-/// At install time we recreate that tree under the destination directory.
+/// Extracts the Astro project files embedded directly into this exe at build time.
+/// The embed prefix is driven by AppProfile.EmbedPrefix — must match the
+/// LogicalName pattern in the .csproj ($(AppEmbedPrefix)/...).
 /// </summary>
 internal static class EmbeddedSourceExtractor
 {
-    private const string Prefix = "sysconda-source/";
+    private static string Prefix => AppProfile.EmbedPrefix;   // ← AppProfile
 
     // Keep ResourceName for backward compat with the validation check in Step1_Location
-    public const string ResourceName = Prefix;
+    public static string ResourceName => Prefix;
 
-    /// <summary>
-    /// Returns true if the exe contains at least one embedded source file.
-    /// </summary>
+    /// <summary>Returns true if the exe contains at least one embedded source file.</summary>
     public static bool IsAvailable =>
         Assembly.GetExecutingAssembly()
                 .GetManifestResourceNames()
@@ -41,14 +33,13 @@ internal static class EmbeddedSourceExtractor
 
         if (resources.Count == 0)
             throw new InvalidOperationException(
-                "No se encontraron archivos embebidos en el ejecutable.\n" +
-                "Recompila el wizard con SysCondaSourceDir configurado en el .csproj.");
+                $"No se encontraron archivos embebidos en el ejecutable.\n" +
+                $"Recompila el wizard con SysCondaSourceDir configurado en el .csproj, o usa ZIP/Git.");
 
         Directory.CreateDirectory(destDir);
 
         foreach (var resourceName in resources)
         {
-            // Strip the "sysconda-source/" prefix to get the relative path
             var relativePath = resourceName[Prefix.Length..]
                 .Replace('/', Path.DirectorySeparatorChar);
 
