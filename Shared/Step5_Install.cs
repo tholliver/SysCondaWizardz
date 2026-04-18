@@ -504,12 +504,7 @@ public class Step5_Install : IWizardStep
 
     private async Task SetupBackup()
     {
-        var scriptPath = Path.Combine(_cfg.AppDirectory, "scripts", "backup_win.ps1");
-        Directory.CreateDirectory(Path.Combine(_cfg.AppDirectory, "scripts"));
         Directory.CreateDirectory(_cfg.BackupDirectory);
-
-        await File.WriteAllTextAsync(scriptPath, BackupScriptGenerator.Generate(_cfg));
-        Log($"  ✓ Script generado: {scriptPath}", LogLevel.Ok);
         _cfg.Save();
         Log($"  ✓ Configuracion de backup guardada.", LogLevel.Ok);
     }

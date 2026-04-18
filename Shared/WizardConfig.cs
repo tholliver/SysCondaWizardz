@@ -80,7 +80,8 @@ public class WizardConfig
     // ── Persistence ──────────────────────────────────────────────────────────
     public static string ConfigFilePath =>
         Path.Combine(
-            Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory,
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "SysCondaWizard",
             "wizard-config.json");
 
     public static WizardConfig Load()
@@ -96,6 +97,7 @@ public class WizardConfig
 
     public void Save()
     {
+        Directory.CreateDirectory(Path.GetDirectoryName(ConfigFilePath)!);
         File.WriteAllText(ConfigFilePath,
             System.Text.Json.JsonSerializer.Serialize(this,
                 new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
