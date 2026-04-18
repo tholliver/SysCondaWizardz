@@ -5,11 +5,16 @@ public class Step4_Backup : IWizardStep
 {
     public string Title => "Backup automático (pg_dump)";
 
+    // Testing mode
+    private CheckBox _chkTestMode = new();
+    private Panel _rowTime = new();
+    private Panel _rowDays = new();
+    // All native
     private CheckBox _chkEnable = new();
     private TextBox _txtPgDump = new();
     private TextBox _txtTime = new();
     private NumericUpDown _numKeep = new();
-    private CheckedListBox _clbDays = new();
+    private CheckBox[] _dayChecks = Array.Empty<CheckBox>();
     private TextBox _txtTaskName = new();
     private CheckBox _chkRestoreOnInstall = new();
     private TextBox _txtPgRestore = new();
@@ -76,25 +81,54 @@ public class Step4_Backup : IWizardStep
         var hintTime = new Label { Text = "(formato HH:mm, hora local)", Location = new Point(256, 6), AutoSize = true, ForeColor = Color.Gray };
         rowTime.Controls.Add(_txtTime);
         rowTime.Controls.Add(hintTime);
+        _rowTime = rowTime;
         WizardUi.AddRow(_detailPanel, rowTime);
 
         var rowDays = MakeRow("Días");
-        _clbDays = new CheckedListBox
+        rowDays.Height = 32;
+        var dayFlow = new FlowLayoutPanel
         {
-            CheckOnClick = true,
-            Width = 380,
-            Height = 22,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            AutoSize = false,
+            Width = 420,
+            Height = 28,
             Location = new Point(168, 0),
-            BorderStyle = BorderStyle.None,
         };
-        _clbDays.Items.AddRange(new object[] { "LUN", "MAR", "MIÉ", "JUE", "VIE", "SÁB", "DOM" });
-        var defaultDays = cfg.BackupDays.Split(',');
+        var dayLabels = new[] { "LUN", "MAR", "MIÉ", "JUE", "VIE", "SÁB", "DOM" };
         var dayMap = new[] { "MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN" };
-        for (int i = 0; i < dayMap.Length; i++)
-            if (defaultDays.Contains(dayMap[i]))
-                _clbDays.SetItemChecked(i, true);
-        rowDays.Controls.Add(_clbDays);
+        var defaultDays = cfg.BackupDays.Split(',');
+        _dayChecks = new CheckBox[7];
+        for (int i = 0; i < 7; i++)
+        {
+            var chk = new CheckBox
+            {
+                Text = dayLabels[i],
+                Width = 52,
+                Height = 24,
+                Checked = defaultDays.Contains(dayMap[i]),
+                Margin = new Padding(0, 0, 2, 0),
+                Tag = i,
+            };
+            dayFlow.Controls.Add(chk);
+            _dayChecks[i] = chk;
+        }
+        rowDays.Controls.Add(dayFlow);
+        _rowDays = rowDays;
         WizardUi.AddRow(_detailPanel, rowDays);
+
+        var rowTest = MakeRow(string.Empty);
+        _chkTestMode = new CheckBox
+        {
+            Text = "⚡ Modo prueba (ejecutar cada minuto)",
+            Checked = cfg.BackupTestMode,
+            AutoSize = true,
+            Location = new Point(168, 3),
+            ForeColor = Color.FromArgb(160, 80, 0),
+        };
+        rowTest.Controls.Add(_chkTestMode);
+        WizardUi.AddRow(_detailPanel, rowTest);
+        _chkTestMode.CheckedChanged += (_, _) => ToggleTestMode();
 
         var rowKeep = MakeRow("Conservar últimos N");
         _numKeep = new NumericUpDown { Minimum = 1, Maximum = 99, Value = cfg.KeepFiles, Width = 60, Location = new Point(168, 2) };
@@ -146,6 +180,7 @@ public class Step4_Backup : IWizardStep
         _chkRestoreOnInstall.CheckedChanged += (_, _) => ToggleRestoreFields();
         RefreshDetectedPostgresPaths();
         ToggleRestoreFields();
+        ToggleTestMode();
 
         WizardUi.InfoBox(root,
             "🗄  Los backups se guardan en formato .dump (pg_restore compatible).\n" +
@@ -162,6 +197,13 @@ public class Step4_Backup : IWizardStep
         _restorePgRow.Visible = enabled;
         _restoreDumpRow.Visible = enabled;
         _restoreHint.Visible = enabled;
+    }
+
+    private void ToggleTestMode()
+    {
+        var isTest = _chkTestMode.Checked;
+        _rowTime.Visible = !isTest;
+        _rowDays.Visible = !isTest;
     }
 
     private void RefreshDetectedPostgresPaths()
@@ -226,7 +268,7 @@ public class Step4_Backup : IWizardStep
             return $"No se encontró pg_dump.exe de PostgreSQL 18 en:\n{_txtPgDump.Text}";
         if (!System.Text.RegularExpressions.Regex.IsMatch(_txtTime.Text.Trim(), @"^\d{1,2}:\d{2}$"))
             return "Hora inválida. Usa formato HH:mm (ej. 18:30).";
-        if (_clbDays.CheckedItems.Count == 0) return "Selecciona al menos un día para el backup.";
+        if (!_dayChecks.Any(c => c.Checked)) return "Selecciona al menos un día para el backup.";
         if (string.IsNullOrWhiteSpace(_txtTaskName.Text)) return "El nombre de la tarea es requerido.";
         if (_chkRestoreOnInstall.Checked && !PostgresBinaryLocator.IsSupportedBinaryPath(_txtPgRestore.Text, "pg_restore.exe"))
             return $"No se encontró pg_restore.exe de PostgreSQL 18 en:\n{_txtPgRestore.Text}";
@@ -240,6 +282,7 @@ public class Step4_Backup : IWizardStep
 
         cfg.PgDumpPath = _txtPgDump.Text.Trim();
         cfg.BackupTime = _txtTime.Text.Trim();
+        cfg.BackupTestMode = _chkTestMode.Checked;
         cfg.KeepFiles = (int)_numKeep.Value;
         cfg.TaskSchedulerTaskName = _txtTaskName.Text.Trim();
         cfg.RestoreDatabaseOnInstall = _chkRestoreOnInstall.Checked;
@@ -248,9 +291,7 @@ public class Step4_Backup : IWizardStep
 
         var dayMap = new[] { "MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN" };
         var checkedDays = new List<string>();
-        for (int i = 0; i < _clbDays.Items.Count; i++)
-            if (_clbDays.GetItemChecked(i)) checkedDays.Add(dayMap[i]);
-        cfg.BackupDays = string.Join(",", checkedDays);
+        for (int i = 0; i < _dayChecks.Length; i++)
+            if (_dayChecks[i].Checked) checkedDays.Add(dayMap[i]);
     }
 }
-

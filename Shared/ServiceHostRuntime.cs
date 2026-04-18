@@ -54,6 +54,7 @@ internal sealed class BunWindowsService : ServiceBase
     private StreamWriter? _stdoutWriter;
     private StreamWriter? _stderrWriter;
     private bool _stopping;
+    private BackupScheduler? _backup;
 
     public BunWindowsService(ServiceHostConfig config)
     {
@@ -74,12 +75,9 @@ internal sealed class BunWindowsService : ServiceBase
     // Replace OnStart with this:
     protected override void OnStart(string[] args)
     {
-        // Tell SCM we need up to 30s — must be called BEFORE any blocking work
         RequestAdditionalTime(30_000);
         _stopping = false;
 
-        // Do all I/O + process launch on a background thread so SCM gets
-        // the control back immediately (fixes error 1053)
         var t = new Thread(() =>
         {
             try
@@ -89,11 +87,16 @@ internal sealed class BunWindowsService : ServiceBase
                 File.AppendAllText(startLog,
                     $"[{DateTimeOffset.Now:u}] Starting — bun={_config.BunExecutable} entry={_config.EntryPoint} dir={_config.AppDirectory}\n");
                 StartChildProcess();
+
+                // START BACKUP AFTER PROCESS IS UP
+                var cfg = WizardConfig.Load();
+                _backup = new BackupScheduler(cfg);
+                _backup.Start();
             }
             catch (Exception ex)
             {
                 ServiceStartupLogger.TryWrite(_config.LogDirectory + "\\service-startup-error.log", ex);
-                Stop(); // gracefully signal SCM we failed
+                Stop();
             }
         });
         t.IsBackground = true;
@@ -102,6 +105,7 @@ internal sealed class BunWindowsService : ServiceBase
 
     protected override void OnStop()
     {
+        _backup?.Dispose();
         _stopping = true;
         StopChildProcess();
         DisposeWriters();
