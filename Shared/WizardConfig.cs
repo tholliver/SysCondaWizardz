@@ -76,4 +76,28 @@ public class WizardConfig
         RATE_LIMIT_WINDOW={RateLimitWindow}
         MAX_ATTEMPTS={MaxAttempts}
         """;
+
+    // ── Persistence ──────────────────────────────────────────────────────────
+    public static string ConfigFilePath =>
+        Path.Combine(
+            Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory,
+            "wizard-config.json");
+
+    public static WizardConfig Load()
+    {
+        if (!File.Exists(ConfigFilePath)) return new WizardConfig();
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<WizardConfig>(
+                File.ReadAllText(ConfigFilePath)) ?? new WizardConfig();
+        }
+        catch { return new WizardConfig(); }
+    }
+
+    public void Save()
+    {
+        File.WriteAllText(ConfigFilePath,
+            System.Text.Json.JsonSerializer.Serialize(this,
+                new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+    }
 }

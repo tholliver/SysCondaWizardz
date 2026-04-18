@@ -510,22 +510,8 @@ public class Step5_Install : IWizardStep
 
         await File.WriteAllTextAsync(scriptPath, BackupScriptGenerator.Generate(_cfg));
         Log($"  ✓ Script generado: {scriptPath}", LogLevel.Ok);
-
-        var parts = _cfg.BackupTime.Split(':');
-        int hh = int.Parse(parts[0]);
-        int mm = int.Parse(parts[1]);
-        var taskName = _cfg.TaskSchedulerTaskName;
-
-        try { RunSync("schtasks", $"/delete /tn \"{taskName}\" /f"); } catch { }
-
-        var cmd = $"/create /tn \"{taskName}\" " +
-                  $"/tr \"powershell.exe -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File \\\"{scriptPath}\\\"\" " +
-                  $"/sc WEEKLY /d {_cfg.BackupDays} " +
-                  $"/st {hh:D2}:{mm:D2} " +
-                  "/rl HIGHEST /f";
-
-        await RunCmd("schtasks", cmd);
-        Log($"  ✓ Tarea '{taskName}' creada en el Programador de tareas.", LogLevel.Ok);
+        _cfg.Save();
+        Log($"  ✓ Configuracion de backup guardada.", LogLevel.Ok);
     }
 
     // ── DB restore ────────────────────────────────────────────────────────────
@@ -691,5 +677,3 @@ public class Step5_Install : IWizardStep
     public string? Validate(WizardConfig cfg) => null;
     public void Save(WizardConfig cfg) => _cfg = cfg;
 }
-
-

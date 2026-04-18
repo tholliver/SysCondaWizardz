@@ -26,7 +26,7 @@
     ══════════════════════════════════════════════════════════════════
   -->
   <PropertyGroup>
-    <SysCondaSourceDir>C:\path\to\your\apptwo</SysCondaSourceDir>
+    <SysCondaSourceDir>C:\Users\DaMagic\Documents\.levi\admin.sys.conda</SysCondaSourceDir>
     <AppEmbedPrefix>apptwo-source</AppEmbedPrefix>
   </PropertyGroup>
 

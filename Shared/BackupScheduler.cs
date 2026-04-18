@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Timer = System.Threading.Timer;
 
 namespace SysCondaWizard;
 
