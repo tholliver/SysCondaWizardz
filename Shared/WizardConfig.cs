@@ -41,7 +41,7 @@ public class WizardConfig
     public string BackupWindowStart { get; set; } = "08:00"; // start of backup window
     public string BackupWindowEnd { get; set; } = "17:00";   // end of backup window
     // fires every 3h within window → 08:00 / 11:00 / 14:00 / 17:00
-    public string BackupDays { get; set; } = "MON,TUE,WED,THU,FRI";
+    public string BackupDays { get; set; } = "MON,TUE,WED,THU,FRI,SAT";
     public bool RestoreDatabaseOnInstall { get; set; } = false;
     public string RestoreDumpPath { get; set; } = "";
     public bool BackupTestMode { get; set; } = false;

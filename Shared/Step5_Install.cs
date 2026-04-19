@@ -88,7 +88,7 @@ public class Step5_Install : IWizardStep
         Log($"  Base datos  : {cfg.DbName}@{cfg.DbHost}:{cfg.DbPort}", LogLevel.Info);
         Log($"  Servicio    : {(cfg.InstallAsService ? cfg.ServiceName : "no")}", LogLevel.Info);
         Log($"  Restore BD  : {(cfg.RestoreDatabaseOnInstall ? "sí" : "no")}", LogLevel.Info);
-        Log($"  Backup auto : {(cfg.EnableBackups ? $"{cfg.BackupTime} [{cfg.BackupDays}]" : "no")}\n", LogLevel.Info);
+        Log($"  Backup auto : {(cfg.EnableBackups ? $"{cfg.BackupWindowStart}-{cfg.BackupWindowEnd} [{cfg.BackupDays}]" : "no")}\n", LogLevel.Info);
 
         return root;
     }
