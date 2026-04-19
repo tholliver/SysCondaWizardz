@@ -90,8 +90,15 @@ internal sealed class BunWindowsService : ServiceBase
 
                 // START BACKUP AFTER PROCESS IS UP
                 var cfg = WizardConfig.Load();
+                var diagLog = Path.Combine(_config.LogDirectory, "backup-scheduler.log");
+                File.AppendAllText(diagLog,
+                    $"[{DateTimeOffset.Now:u}] BackupScheduler starting — " +
+                    $"EnableBackups={cfg.EnableBackups} TestMode={cfg.BackupTestMode} " +
+                    $"BackupTime={cfg.BackupTime} BackupTimeMorning={cfg.BackupTimeMorning} " +
+                    $"PgDumpPath={cfg.PgDumpPath} ConfigFile={WizardConfig.ConfigFilePath}\n");
                 _backup = new BackupScheduler(cfg);
                 _backup.Start();
+                File.AppendAllText(diagLog, $"[{DateTimeOffset.Now:u}] BackupScheduler.Start() completed\n");
             }
             catch (Exception ex)
             {

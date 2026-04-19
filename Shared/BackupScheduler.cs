@@ -5,13 +5,13 @@ namespace SysCondaWizard;
 
 /// <summary>
 /// Runs pg_dump on a schedule directly from the Windows Service.
-/// Supports test mode (every minute), single or dual daily triggers,
-/// day-of-week filtering, and tiered rotation (7 daily / 4 weekly / 3 monthly).
+/// Fires every 3 hours starting at BackupWindowStart, only within
+/// the configured window (default 08:00-17:00 Bolivia time).
+/// Tiered rotation: 7 daily + 4 weekly + 3 monthly.
 /// </summary>
 public sealed class BackupScheduler : IDisposable
 {
-    private Timer? _timerMorning;
-    private Timer? _timerEvening;
+    private Timer? _timerScheduled;
     private Timer? _timerTest;
     private readonly WizardConfig _cfg;
 
@@ -23,25 +23,46 @@ public sealed class BackupScheduler : IDisposable
 
         if (_cfg.BackupTestMode)
         {
-            // Fire after 10s, then every minute
+            // Fire after 10s then every minute — ignores window
             _timerTest = new Timer(_ => RunBackup("test"), null,
                 TimeSpan.FromSeconds(10), TimeSpan.FromMinutes(1));
             return;
         }
 
-        // Primary trigger — user configured time (e.g. 18:30)
-        _timerMorning = new Timer(_ => RunBackup("scheduled"),
-            null, TimeUntilNext(_cfg.BackupTime), TimeSpan.FromHours(24));
+        // Catch-up: if last backup was 20+ hours ago fire in 15s
+        TriggerCatchUpIfNeeded();
 
-        // Secondary trigger — morning snapshot at 06:00 for financial safety
-        _timerEvening = new Timer(_ => RunBackup("morning"),
-            null, TimeUntilNext(_cfg.BackupTimeMorning), TimeSpan.FromHours(24));
+        // Main timer: every 3 hours starting at window start (08:00)
+        // Window gate inside RunBackup blocks shots outside 08:00-17:00
+        _timerScheduled = new Timer(_ => RunBackup("scheduled"),
+            null, TimeUntilNext(_cfg.BackupWindowStart), TimeSpan.FromHours(3));
+    }
+
+    private void TriggerCatchUpIfNeeded()
+    {
+        try
+        {
+            var lastBackupFile = Path.Combine(_cfg.BackupDirectory, ".last_backup");
+            if (!File.Exists(lastBackupFile)) return;
+
+            var raw = File.ReadAllText(lastBackupFile).Trim();
+            if (!DateTime.TryParse(raw, out var lastBackup)) return;
+
+            var hoursSinceLast = (DateTime.UtcNow - lastBackup.ToUniversalTime()).TotalHours;
+            if (hoursSinceLast >= 20)
+            {
+                // Missed at least one cycle — fire catch-up in 15s (once only)
+                new Timer(_ => RunBackup("catchup"), null,
+                    TimeSpan.FromSeconds(15), Timeout.InfiniteTimeSpan);
+            }
+        }
+        catch { }
     }
 
     private void RunBackup(string tag)
     {
-        // Day-of-week gate (skip on non-scheduled days in normal mode)
         if (!_cfg.BackupTestMode && !IsTodayScheduled()) return;
+        if (!_cfg.BackupTestMode && !IsWithinBackupWindow()) return;
 
         var dir = _cfg.BackupDirectory;
         Directory.CreateDirectory(dir);
@@ -59,7 +80,6 @@ public sealed class BackupScheduler : IDisposable
 
         try
         {
-            // Check DB connectivity before dumping
             if (!CanConnectToDb(out var connErr))
                 throw new Exception($"DB unreachable: {connErr}");
 
@@ -88,7 +108,6 @@ public sealed class BackupScheduler : IDisposable
                 throw new Exception($"Dump too small ({size} bytes) - DB may be empty");
             }
 
-            // Tiered rotation: 7 daily + 4 weekly + 3 monthly
             RotateBackups(dir);
 
             File.WriteAllText(Path.Combine(dir, ".last_backup"),
@@ -104,6 +123,22 @@ public sealed class BackupScheduler : IDisposable
         }
     }
 
+    // ── Window gate 08:00-17:00 ───────────────────────────────────────────────
+
+    private bool IsWithinBackupWindow()
+    {
+        var now = DateTime.Now.TimeOfDay;
+        var start = ParseTime(_cfg.BackupWindowStart);
+        var end = ParseTime(_cfg.BackupWindowEnd);
+        return now >= start && now <= end;
+    }
+
+    private static TimeSpan ParseTime(string timeStr)
+    {
+        var parts = timeStr.Split(':');
+        return new TimeSpan(int.Parse(parts[0]), int.Parse(parts[1]), 0);
+    }
+
     // ── DB connectivity pre-check ─────────────────────────────────────────────
 
     private bool CanConnectToDb(out string error)
@@ -113,7 +148,7 @@ public sealed class BackupScheduler : IDisposable
         {
             var psqlDir = Path.GetDirectoryName(_cfg.PgDumpPath) ?? "";
             var psql = Path.Combine(psqlDir, "psql.exe");
-            if (!File.Exists(psql)) return true; // skip check if psql not found
+            if (!File.Exists(psql)) return true;
 
             var psi = new ProcessStartInfo
             {
@@ -128,7 +163,7 @@ public sealed class BackupScheduler : IDisposable
             psi.Environment["PGPASSWORD"] = _cfg.DbPassword;
 
             using var p = Process.Start(psi)!;
-            p.WaitForExit(10_000); // 10s timeout
+            p.WaitForExit(10_000);
             if (p.ExitCode != 0)
             {
                 error = p.StandardError.ReadToEnd().Trim();
@@ -178,7 +213,6 @@ public sealed class BackupScheduler : IDisposable
             if (monthly != null) keep.Add(monthly.FullName);
         }
 
-        // Delete everything not in keep set
         files.Where(f => !keep.Contains(f.FullName))
              .ToList()
              .ForEach(f => { try { f.Delete(); } catch { } });
@@ -211,9 +245,9 @@ public sealed class BackupScheduler : IDisposable
             .AddHours(int.Parse(parts[0]))
             .AddMinutes(int.Parse(parts[1]));
 
-        // If missed by less than 10 minutes, fire in 30s instead of waiting 24h
+        // If missed by less than 60 minutes fire in 30s instead of waiting
         var diff = DateTime.Now - target;
-        if (diff > TimeSpan.Zero && diff < TimeSpan.FromMinutes(10))
+        if (diff > TimeSpan.Zero && diff < TimeSpan.FromMinutes(60))
             return TimeSpan.FromSeconds(30);
 
         if (target <= DateTime.Now) target = target.AddDays(1);
@@ -223,7 +257,6 @@ public sealed class BackupScheduler : IDisposable
     public void Dispose()
     {
         _timerTest?.Dispose();
-        _timerMorning?.Dispose();
-        _timerEvening?.Dispose();
+        _timerScheduled?.Dispose();
     }
 }

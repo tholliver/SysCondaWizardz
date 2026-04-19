@@ -38,8 +38,9 @@ public class WizardConfig
     public bool EnableBackups { get; set; } = true;
     public string PgDumpPath { get; set; } = PostgresBinaryLocator.FindPgDumpPath();
     public string PgRestorePath { get; set; } = PostgresBinaryLocator.FindPgRestorePath();
-    public string BackupTimeMorning { get; set; } = "06:00";   // morning snapshot
-    public string BackupTime { get; set; } = "18:30";          // evening snapshot
+    public string BackupWindowStart { get; set; } = "08:00"; // start of backup window
+    public string BackupWindowEnd { get; set; } = "17:00";   // end of backup window
+    // fires every 3h within window → 08:00 / 11:00 / 14:00 / 17:00
     public string BackupDays { get; set; } = "MON,TUE,WED,THU,FRI";
     public bool RestoreDatabaseOnInstall { get; set; } = false;
     public string RestoreDumpPath { get; set; } = "";
