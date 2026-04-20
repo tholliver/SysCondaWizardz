@@ -6,9 +6,17 @@ namespace SysCondaWizard;
 
 static class Program
 {
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    static extern bool AttachConsole(int dwProcessId);
+
     [STAThread]
     static void Main(string[] args)
     {
+        if (args.Length > 0)
+        {
+            AttachConsole(-1);
+        }
+
         if (ServiceHostRuntime.TryRun(args))
             return;
 
