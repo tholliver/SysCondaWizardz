@@ -7,7 +7,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationManifest>..\Shared\app.manifest</ApplicationManifest>
-    <AssemblyName>AppTwoWizard</AssemblyName>
+    <AssemblyName>AdminCondaWizard</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>
@@ -27,7 +27,7 @@
   -->
   <PropertyGroup>
     <SysCondaSourceDir>C:\Users\DaMagic\Documents\.levi\admin.sys.conda</SysCondaSourceDir>
-    <AppEmbedPrefix>apptwo-source</AppEmbedPrefix>
+    <AppEmbedPrefix>adminconda-source</AppEmbedPrefix>
   </PropertyGroup>
 
   <Target Name="ValidateSource" BeforeTargets="BeforeBuild">
