@@ -19,36 +19,43 @@ public class UninstallForm : Form
     private Panel _actionsPanel = new();
     private bool _running;
 
+    // FIX 1: Track the current click handler so we can remove it cleanly
+    private EventHandler? _btnClickHandler;
+
     private static readonly Color Accent = Color.FromArgb(79, 70, 229);
 
     public UninstallForm(WizardConfig cfg)
     {
         _cfg = cfg;
         InitializeForm();
-        RunHealthCheck();
+        // RunHealthCheck();
+        Load += (_, _) => RunHealthCheck();
     }
 
     private void InitializeForm()
     {
-        Text            = $"Desinstalar — {AppProfile.AppName}";
-        Size            = new Size(700, 560);
-        MinimumSize     = new Size(600, 480);
-        StartPosition   = FormStartPosition.CenterScreen;
-        Font            = new Font("Segoe UI", 9.5f);
-        BackColor       = Color.White;
+        Text = $"Desinstalar — {AppProfile.AppName}";
+        Size = new Size(700, 560);
+        MinimumSize = new Size(600, 480);
+        StartPosition = FormStartPosition.CenterScreen;
+        Font = new Font("Segoe UI", 9.5f);
+        BackColor = Color.White;
         FormBorderStyle = FormBorderStyle.Sizable;
-        MaximizeBox     = false;
+        MaximizeBox = false;
 
         // Header
         var header = new Panel
         {
-            Dock = DockStyle.Top, Height = 52, BackColor = Color.FromArgb(180, 30, 30),
+            Dock = DockStyle.Top,
+            Height = 52,
+            BackColor = Color.FromArgb(180, 30, 30),
             Padding = new Padding(20, 12, 20, 8)
         };
         header.Controls.Add(new Label
         {
             Text = "🗑  Desinstalación de " + AppProfile.AppName,
-            Dock = DockStyle.Fill, ForeColor = Color.White,
+            Dock = DockStyle.Fill,
+            ForeColor = Color.White,
             Font = new Font("Segoe UI Semibold", 13f),
             TextAlign = ContentAlignment.MiddleLeft
         });
@@ -56,7 +63,8 @@ public class UninstallForm : Form
         // Log area
         _log = new RichTextBox
         {
-            Dock = DockStyle.Fill, ReadOnly = true,
+            Dock = DockStyle.Fill,
+            ReadOnly = true,
             BackColor = Color.FromArgb(18, 18, 24),
             ForeColor = Color.FromArgb(200, 210, 220),
             Font = new Font("Consolas", 9f),
@@ -70,7 +78,8 @@ public class UninstallForm : Form
         // Options panel
         _actionsPanel = new Panel
         {
-            Dock = DockStyle.Bottom, Height = 160,
+            Dock = DockStyle.Bottom,
+            Height = 160,
             BackColor = Color.FromArgb(248, 248, 252),
             Padding = new Padding(20, 12, 20, 12),
             Visible = false,
@@ -82,7 +91,8 @@ public class UninstallForm : Form
         var optLabel = new Label
         {
             Text = "Opciones de limpieza:",
-            Dock = DockStyle.Top, Height = 26,
+            Dock = DockStyle.Top,
+            Height = 26,
             Font = new Font("Segoe UI Semibold", 9.5f),
             ForeColor = Color.FromArgb(60, 60, 80),
             Padding = new Padding(0, 6, 0, 0)
@@ -91,26 +101,33 @@ public class UninstallForm : Form
         _chkDeleteFiles = new CheckBox
         {
             Text = $"Eliminar archivos de instalación  ({_cfg.RootDirectory})",
-            Dock = DockStyle.Top, Height = 24, Checked = false,
+            Dock = DockStyle.Top,
+            Height = 24,
+            Checked = false,
             ForeColor = Color.FromArgb(60, 60, 80)
         };
         _chkDeleteBackups = new CheckBox
         {
             Text = $"Eliminar backups  ({_cfg.BackupDirectory})",
-            Dock = DockStyle.Top, Height = 24, Checked = false,
+            Dock = DockStyle.Top,
+            Height = 24,
+            Checked = false,
             ForeColor = Color.FromArgb(180, 60, 60)
         };
         _chkDeleteConfig = new CheckBox
         {
             Text = $"Eliminar configuración guardada  ({_cfg.InstallConfigPath})",
-            Dock = DockStyle.Top, Height = 24, Checked = false,
+            Dock = DockStyle.Top,
+            Height = 24,
+            Checked = false,
             ForeColor = Color.FromArgb(140, 80, 0)
         };
 
         _btnUninstall = new Button
         {
             Text = "🗑  Desinstalar",
-            Dock = DockStyle.Bottom, Height = 36,
+            Dock = DockStyle.Bottom,
+            Height = 36,
             FlatStyle = FlatStyle.Flat,
             BackColor = Color.FromArgb(180, 30, 30),
             ForeColor = Color.White,
@@ -118,7 +135,10 @@ public class UninstallForm : Form
             Font = new Font("Segoe UI Semibold", 10f),
         };
         _btnUninstall.FlatAppearance.BorderColor = Color.FromArgb(180, 30, 30);
-        _btnUninstall.Click += async (_, _) => await RunUninstallAsync();
+
+        // FIX 1: Store the handler reference so we can remove it later
+        _btnClickHandler = async (_, _) => await RunUninstallAsync();
+        _btnUninstall.Click += _btnClickHandler;
 
         // Stack controls bottom-up (DockStyle.Top stacks top-down in reverse add order)
         _actionsPanel.Controls.Add(_btnUninstall);
@@ -141,8 +161,11 @@ public class UninstallForm : Form
 
         // Config file
         var cfgExists = File.Exists(_cfg.InstallConfigPath) || File.Exists(WizardConfig.LegacyConfigFilePath);
-        Log($"  Config wizard   : {_cfg.InstallConfigPath}", File.Exists(_cfg.InstallConfigPath) ? LogLevel.Ok : LogLevel.Warn); if (File.Exists(WizardConfig.LegacyConfigFilePath)) Log($"    Legado        : {WizardConfig.LegacyConfigFilePath}", LogLevel.Warn);
-        if (!cfgExists) Log("    ⚠ No se encontró config guardada — puede que nunca se instaló.", LogLevel.Warn);
+        Log($"  Config wizard   : {_cfg.InstallConfigPath}", File.Exists(_cfg.InstallConfigPath) ? LogLevel.Ok : LogLevel.Warn);
+        if (File.Exists(WizardConfig.LegacyConfigFilePath))
+            Log($"    Legado        : {WizardConfig.LegacyConfigFilePath}", LogLevel.Warn);
+        if (!cfgExists)
+            Log("    ⚠ No se encontró config guardada — puede que nunca se instaló.", LogLevel.Warn);
 
         // Root dir
         var rootExists = Directory.Exists(_cfg.RootDirectory);
@@ -205,17 +228,17 @@ public class UninstallForm : Form
         if (_running) return;
         _running = true;
         _btnUninstall.Enabled = false;
-        _btnUninstall.Text    = "Desinstalando...";
+        _btnUninstall.Text = "Desinstalando...";
 
-        var deleteFiles   = _chkDeleteFiles.Checked;
+        var deleteFiles = _chkDeleteFiles.Checked;
         var deleteBackups = _chkDeleteBackups.Checked;
-        var deleteConfig  = _chkDeleteConfig.Checked;
+        var deleteConfig = _chkDeleteConfig.Checked;
 
         if (!Confirm(BuildConfirmMessage(deleteFiles, deleteBackups, deleteConfig)))
         {
             _running = false;
             _btnUninstall.Enabled = true;
-            _btnUninstall.Text    = "🗑  Desinstalar";
+            _btnUninstall.Text = "🗑  Desinstalar";
             return;
         }
 
@@ -224,7 +247,7 @@ public class UninstallForm : Form
         await Task.Run(() =>
         {
             // 1. Stop and delete service
-            StopAndDeleteService();
+            StopAndDeleteService(_cfg.ServiceName);
 
             // 2. Wait for process to fully release files
             Thread.Sleep(2000);
@@ -269,10 +292,10 @@ public class UninstallForm : Form
                 try
                 {
                     if (File.Exists(_cfg.InstallConfigPath))
-                    {
-                        File.Delete(_cfg.InstallConfigPath); if (File.Exists(WizardConfig.LegacyConfigFilePath)) File.Delete(WizardConfig.LegacyConfigFilePath);
-                        Log($"  ✓ Config eliminada: {_cfg.InstallConfigPath}", LogLevel.Ok);
-                    }
+                        File.Delete(_cfg.InstallConfigPath);
+                    if (File.Exists(WizardConfig.LegacyConfigFilePath))
+                        File.Delete(WizardConfig.LegacyConfigFilePath);
+                    Log($"  ✓ Config eliminada: {_cfg.InstallConfigPath}", LogLevel.Ok);
                 }
                 catch (Exception ex)
                 {
@@ -285,24 +308,39 @@ public class UninstallForm : Form
         Log("  ✅  Desinstalación completada", LogLevel.Ok);
         Log("══════════════════════════════════════════", LogLevel.Ok);
 
-        RunOnUi(_btnUninstall, () =>
+        // FIX 2: Properly swap the button — remove old handler, hide options panel, wire Close
+        RunOnUi(this, () =>
         {
-            _btnUninstall.Text      = "Cerrar";
-            _btnUninstall.BackColor = Color.FromArgb(60, 60, 80);
-            _btnUninstall.Enabled   = true;
-            _btnUninstall.Click    -= null;
-            _btnUninstall.Click    += (_, _) => Close();
+            // Hide checkboxes and options — nothing left to configure
+            _actionsPanel.Visible = false;
+
+            // Remove the uninstall handler and wire the close handler
+            if (_btnClickHandler is not null)
+            {
+                _btnUninstall.Click -= _btnClickHandler;
+                _btnClickHandler = null;
+            }
+            _btnUninstall.Text = "✔  Cerrar";
+            _btnUninstall.BackColor = Color.FromArgb(40, 120, 60);
+            _btnUninstall.FlatAppearance.BorderColor = Color.FromArgb(40, 120, 60);
+            _btnUninstall.Enabled = true;
+            _btnUninstall.Click += (_, _) => Close();
+
+            // Show the button standalone at the bottom of the form
+            _btnUninstall.Dock = DockStyle.Bottom;
+            Controls.Add(_btnUninstall);
         });
 
         _running = false;
     }
 
-    private void StopAndDeleteService()
+    // FIX 3: Single service per build — accepts name as param for clarity/extensibility
+    private void StopAndDeleteService(string serviceName)
     {
-        Log($"  Deteniendo servicio '{_cfg.ServiceName}'...", LogLevel.Info);
+        Log($"  Deteniendo servicio '{serviceName}'...", LogLevel.Info);
         try
         {
-            using var sc = new ServiceController(_cfg.ServiceName);
+            using var sc = new ServiceController(serviceName);
             if (sc.Status != ServiceControllerStatus.Stopped)
             {
                 sc.Stop();
@@ -315,10 +353,10 @@ public class UninstallForm : Form
             Log($"  ! Stop: {ex.Message}", LogLevel.Warn);
         }
 
-        Log($"  Eliminando servicio '{_cfg.ServiceName}'...", LogLevel.Info);
+        Log($"  Eliminando servicio '{serviceName}'...", LogLevel.Info);
         try
         {
-            RunSc("delete", _cfg.ServiceName);
+            RunSc("delete", serviceName);
             Log($"  ✓ Servicio eliminado.", LogLevel.Ok);
         }
         catch (Exception ex)
@@ -353,7 +391,7 @@ public class UninstallForm : Form
             FileName = "sc.exe",
             UseShellExecute = false,
             RedirectStandardOutput = true,
-            RedirectStandardError  = true,
+            RedirectStandardError = true,
             CreateNoWindow = true,
         };
         foreach (var a in args) psi.ArgumentList.Add(a);
@@ -369,15 +407,15 @@ public class UninstallForm : Form
     {
         var lines = new List<string> { "¿Confirmar desinstalación?\n" };
         lines.Add("  • Detener y eliminar el servicio de Windows");
-        if (files)   lines.Add($"  • Eliminar archivos de instalación");
+        if (files) lines.Add($"  • Eliminar archivos de instalación");
         if (backups) lines.Add($"  • ⚠  ELIMINAR TODOS LOS BACKUPS");
-        if (config)  lines.Add($"  • Eliminar configuración guardada");
+        if (config) lines.Add($"  • Eliminar configuración guardada");
         lines.Add("\nEsta acción no se puede deshacer.");
         return string.Join("\n", lines);
     }
 
     private void ShowActions() =>
-        RunOnUi(_actionsPanel, () => _actionsPanel.Visible = true);
+        RunOnUi(this, () => _actionsPanel.Visible = true);
 
     private bool Confirm(string msg) =>
         MessageBox.Show(msg, "Confirmar desinstalación",
@@ -388,30 +426,39 @@ public class UninstallForm : Form
 
     private void Log(string text, LogLevel level)
     {
-        if (_log.IsDisposed) return;
+        // FIX 4: Check IsDisposed inside a try/catch to eliminate the race condition
+        // between the background thread check and the UI thread Invoke call.
         RunOnUi(_log, () =>
         {
             Color clr = level switch
             {
                 LogLevel.Header => Color.FromArgb(140, 160, 255),
-                LogLevel.Ok     => Color.FromArgb(80, 220, 120),
-                LogLevel.Warn   => Color.FromArgb(255, 180, 60),
-                LogLevel.Error  => Color.FromArgb(255, 80, 80),
-                _               => Color.FromArgb(200, 210, 220),
+                LogLevel.Ok => Color.FromArgb(80, 220, 120),
+                LogLevel.Warn => Color.FromArgb(255, 180, 60),
+                LogLevel.Error => Color.FromArgb(255, 80, 80),
+                _ => Color.FromArgb(200, 210, 220),
             };
-            _log.SelectionStart  = _log.TextLength;
+            _log.SelectionStart = _log.TextLength;
             _log.SelectionLength = 0;
-            _log.SelectionColor  = clr;
+            _log.SelectionColor = clr;
             _log.AppendText(text + "\n");
             _log.ScrollToCaret();
         });
     }
 
+    // FIX 4: Wrap the entire Invoke in try/catch — the only safe way to handle
+    // the race where the form is disposed between IsDisposed check and Invoke().
     private static void RunOnUi(Control c, Action a)
     {
-        if (c.IsDisposed) return;
-        if (!c.IsHandleCreated || !c.InvokeRequired) { a(); return; }
-        c.Invoke(a);
+        try
+        {
+            if (c.IsDisposed || !c.IsHandleCreated) return;
+            if (c.InvokeRequired)
+                c.Invoke(a);
+            else
+                a();
+        }
+        catch (ObjectDisposedException) { /* form closed mid-operation — safe to ignore */ }
+        catch (InvalidOperationException) { /* handle destroyed mid-invoke — safe to ignore */ }
     }
 }
-
