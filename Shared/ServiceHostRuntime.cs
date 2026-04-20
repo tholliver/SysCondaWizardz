@@ -89,13 +89,13 @@ internal sealed class BunWindowsService : ServiceBase
                 StartChildProcess();
 
                 // START BACKUP AFTER PROCESS IS UP
-                var cfg = WizardConfig.Load();
+                var cfg = WizardConfig.Load(Directory.GetParent(_config.LogDirectory)?.FullName);
                 var diagLog = Path.Combine(_config.LogDirectory, "backup-scheduler.log");
                 File.AppendAllText(diagLog,
                     $"[{DateTimeOffset.Now:u}] BackupScheduler starting — " +
                     $"EnableBackups={cfg.EnableBackups} TestMode={cfg.BackupTestMode} " +
                     $"BackupWindowStart={cfg.BackupWindowStart} BackupWindowEnd={cfg.BackupWindowEnd} " +
-                    $"PgDumpPath={cfg.PgDumpPath} ConfigFile={WizardConfig.ConfigFilePath}\n");
+                    $"PgDumpPath={cfg.PgDumpPath} ConfigFile={cfg.InstallConfigPath}\n");
                 _backup = new BackupScheduler(cfg);
                 _backup.Start();
                 File.AppendAllText(diagLog, $"[{DateTimeOffset.Now:u}] BackupScheduler.Start() completed\n");
@@ -302,3 +302,4 @@ internal static class EnvFileLoader
         return values;
     }
 }
+

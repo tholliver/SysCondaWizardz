@@ -159,19 +159,18 @@ public class Step5_Install : IWizardStep
                 Tick();
             }
 
-            // 10 ── (optional) Windows service ────────────────────────────
-            if (_cfg.InstallAsService)
+            if (_cfg.EnableBackups)
             {
-                Log("\n[10/x] Instalando servicio de Windows...", LogLevel.Step);
-                InstallWindowsService();
+                Log("\n[10/x] Configurando backup automatico...", LogLevel.Step);
+                await SetupBackup();
                 Tick();
             }
 
-            // 11 ── (optional) Backup config ──────────────────────────────
-            if (_cfg.EnableBackups)
+            // 11 ── (optional) Windows service ────────────────────────────
+            if (_cfg.InstallAsService)
             {
-                Log("\n[11/x] Configurando backup automatico...", LogLevel.Step);
-                await SetupBackup();
+                Log("\n[11/x] Instalando servicio de Windows...", LogLevel.Step);
+                InstallWindowsService();
                 Tick();
             }
 
@@ -551,6 +550,8 @@ public class Step5_Install : IWizardStep
 
     private void InstallWindowsService()
     {
+        _cfg.Save();
+
         var entryMjs = Path.Combine(_cfg.AppDirectory, "dist", "server", "entry.mjs");
         if (!File.Exists(entryMjs))
             throw new Exception($"No se encontró el entrypoint compilado: {entryMjs}");
@@ -802,3 +803,4 @@ public class Step5_Install : IWizardStep
     public string? Validate(WizardConfig cfg) => null;
     public void Save(WizardConfig cfg) => _cfg = cfg;
 }
+

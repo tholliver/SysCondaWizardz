@@ -5,37 +5,44 @@ namespace SysCondaWizard;
 
 /// <summary>
 /// Runs pg_dump on a schedule directly from the Windows Service.
-/// Fires every 3 hours starting at BackupWindowStart, only within
-/// the configured window (default 08:00-17:00 Bolivia time).
+/// Always fires exactly 4 times per day, evenly spread across the configured window.
+/// Interval = (windowEnd - windowStart) / 3, so shots land at: start, +1/3, +2/3, end.
+/// All times are in Bolivia time (UTC-4, no DST).
 /// Tiered rotation: 7 daily + 4 weekly + 3 monthly.
 /// </summary>
 public sealed class BackupScheduler : IDisposable
 {
     private Timer? _timerScheduled;
-    private Timer? _timerTest;
+    private Timer? _timerCatchup;
     private readonly WizardConfig _cfg;
 
+    // Bolivia is UTC-4 (no DST)
+    private static readonly TimeZoneInfo BoliviaZone =
+        TimeZoneInfo.CreateCustomTimeZone("BOT", TimeSpan.FromHours(-4), "Bolivia Time", "Bolivia Time");
+
     public BackupScheduler(WizardConfig cfg) => _cfg = cfg;
+
+    // Interval is always (window duration / 3) so 4 shots fit exactly
+    private TimeSpan ComputeInterval()
+    {
+        var start = ParseTime(_cfg.BackupWindowStart);
+        var end = ParseTime(_cfg.BackupWindowEnd);
+        var span = end - start;
+        if (span <= TimeSpan.Zero) span = TimeSpan.FromHours(10); // fallback
+        return TimeSpan.FromTicks(span.Ticks / 3);
+    }
 
     public void Start()
     {
         if (!_cfg.EnableBackups) return;
 
-        if (_cfg.BackupTestMode)
-        {
-            // Fire after 10s then every minute — ignores window
-            _timerTest = new Timer(_ => RunBackup("test"), null,
-                TimeSpan.FromSeconds(10), TimeSpan.FromMinutes(1));
-            return;
-        }
+        Directory.CreateDirectory(_cfg.BackupDirectory);
 
-        // Catch-up: if last backup was 20+ hours ago fire in 15s
+        // Catch-up: if last backup was 20+ hours ago (or never), fire in 15s
         TriggerCatchUpIfNeeded();
 
-        // Main timer: every 3 hours starting at window start (08:00)
-        // Window gate inside RunBackup blocks shots outside 08:00-17:00
-        _timerScheduled = new Timer(_ => RunBackup("scheduled"),
-            null, TimeUntilNext(_cfg.BackupWindowStart), TimeSpan.FromHours(3));
+        _timerScheduled = new Timer(_ => RunScheduledBackup(), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        ScheduleNextScheduledRun("start");
     }
 
     private void TriggerCatchUpIfNeeded()
@@ -43,26 +50,60 @@ public sealed class BackupScheduler : IDisposable
         try
         {
             var lastBackupFile = Path.Combine(_cfg.BackupDirectory, ".last_backup");
-            if (!File.Exists(lastBackupFile)) return;
+
+            if (!File.Exists(lastBackupFile))
+            {
+                ScheduleCatchup();
+                return;
+            }
 
             var raw = File.ReadAllText(lastBackupFile).Trim();
             if (!DateTime.TryParse(raw, out var lastBackup)) return;
 
             var hoursSinceLast = (DateTime.UtcNow - lastBackup.ToUniversalTime()).TotalHours;
             if (hoursSinceLast >= 20)
-            {
-                // Missed at least one cycle — fire catch-up in 15s (once only)
-                new Timer(_ => RunBackup("catchup"), null,
-                    TimeSpan.FromSeconds(15), Timeout.InfiniteTimeSpan);
-            }
+                ScheduleCatchup();
         }
         catch { }
     }
 
+    private void ScheduleCatchup()
+    {
+        // Must be stored — a local var would be GC'd before it fires
+        LogScheduler("Catch-up backup scheduled for 15 seconds from now.");
+        _timerCatchup = new Timer(_ =>
+        {
+            RunBackup("catchup");
+            _timerCatchup?.Dispose();
+            _timerCatchup = null;
+        }, null, TimeSpan.FromSeconds(15), Timeout.InfiniteTimeSpan);
+    }
+
+    private void RunScheduledBackup()
+    {
+        try
+        {
+            RunBackup("scheduled");
+        }
+        finally
+        {
+            ScheduleNextScheduledRun("reschedule");
+        }
+    }
+
+    private void ScheduleNextScheduledRun(string reason)
+    {
+        if (_timerScheduled == null) return;
+
+        var interval = ComputeInterval();
+        var delay = TimeUntilNext(_cfg.BackupWindowStart, interval);
+        _timerScheduled.Change(delay, Timeout.InfiniteTimeSpan);
+        LogScheduler($"Scheduled next backup ({reason}) in {delay:c} for window {_cfg.BackupWindowStart}-{_cfg.BackupWindowEnd}.");
+    }
     private void RunBackup(string tag)
     {
-        if (!_cfg.BackupTestMode && !IsTodayScheduled()) return;
-        if (!_cfg.BackupTestMode && !IsWithinBackupWindow()) return;
+        if (!IsTodayScheduled()) return;
+        if (!IsWithinBackupWindow()) return;
 
         var dir = _cfg.BackupDirectory;
         Directory.CreateDirectory(dir);
@@ -70,12 +111,13 @@ public sealed class BackupScheduler : IDisposable
         var logFile = Path.Combine(dir, "backup.log");
         void Log(string msg)
         {
-            var line = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [{tag.ToUpper()}] {msg}";
+            var boliviaNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, BoliviaZone);
+            var line = $"[{boliviaNow:yyyy-MM-dd HH:mm:ss} BOT] [{tag.ToUpper()}] {msg}";
             try { File.AppendAllText(logFile, line + Environment.NewLine); } catch { }
         }
 
-        var fileName = Path.Combine(dir,
-            $"backup_cron_{DateTime.Now:yyyy-MM-ddTHH-mm-ss}.dump");
+        var boliviaTs = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, BoliviaZone);
+        var fileName = Path.Combine(dir, $"backup_cron_{boliviaTs:yyyy-MM-ddTHH-mm-ss}.dump");
         Log($"Starting backup: {Path.GetFileName(fileName)}");
 
         try
@@ -123,14 +165,14 @@ public sealed class BackupScheduler : IDisposable
         }
     }
 
-    // ── Window gate 08:00-17:00 ───────────────────────────────────────────────
+    // ── Window gate ───────────────────────────────────────────────────────────
 
     private bool IsWithinBackupWindow()
     {
-        var now = DateTime.Now.TimeOfDay;
+        var boliviaNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, BoliviaZone).TimeOfDay;
         var start = ParseTime(_cfg.BackupWindowStart);
         var end = ParseTime(_cfg.BackupWindowEnd);
-        return now >= start && now <= end;
+        return boliviaNow >= start && boliviaNow <= end;
     }
 
     private static TimeSpan ParseTime(string timeStr)
@@ -190,20 +232,16 @@ public sealed class BackupScheduler : IDisposable
         var keep = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var now = DateTime.Now;
 
-        // Keep last 7 dailies
         files.Take(7).ToList().ForEach(f => keep.Add(f.FullName));
 
-        // Keep 1 per week for last 4 weeks
         for (int w = 1; w <= 4; w++)
         {
             var weekStart = now.AddDays(-w * 7);
             var weekly = files.FirstOrDefault(f =>
-                f.LastWriteTime >= weekStart &&
-                f.LastWriteTime < weekStart.AddDays(7));
+                f.LastWriteTime >= weekStart && f.LastWriteTime < weekStart.AddDays(7));
             if (weekly != null) keep.Add(weekly.FullName);
         }
 
-        // Keep 1 per month for last 3 months
         for (int m = 1; m <= 3; m++)
         {
             var monthStart = now.AddMonths(-m);
@@ -235,28 +273,54 @@ public sealed class BackupScheduler : IDisposable
         var scheduled = _cfg.BackupDays.Split(',')
             .Select(d => dayMap.GetValueOrDefault(d.Trim()))
             .ToHashSet();
-        return scheduled.Contains(DateTime.Now.DayOfWeek);
+        var boliviaToday = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, BoliviaZone).DayOfWeek;
+        return scheduled.Contains(boliviaToday);
     }
 
-    private static TimeSpan TimeUntilNext(string timeStr)
+    /// <summary>
+    /// Finds the next shot time from the 4-shot schedule and returns the delay to it.
+    /// If the service starts mid-window it snaps to the next upcoming slot.
+    /// </summary>
+    private static TimeSpan TimeUntilNext(string windowStartStr, TimeSpan interval)
     {
-        var parts = timeStr.Split(':');
-        var target = DateTime.Today
-            .AddHours(int.Parse(parts[0]))
-            .AddMinutes(int.Parse(parts[1]));
+        var boliviaNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, BoliviaZone);
+        var windowStart = ParseTime(windowStartStr);
+        var firstShot = boliviaNow.Date + windowStart;
 
-        // If missed by less than 60 minutes fire in 30s instead of waiting
-        var diff = DateTime.Now - target;
-        if (diff > TimeSpan.Zero && diff < TimeSpan.FromMinutes(60))
-            return TimeSpan.FromSeconds(30);
+        // Walk the 4-shot schedule: start, +interval, +2*interval, +3*interval
+        DateTime nextShot = firstShot.AddDays(1); // fallback: tomorrow
+        for (int i = 0; i < 4; i++)
+        {
+            var candidate = firstShot.Add(TimeSpan.FromTicks(interval.Ticks * i));
+            if (candidate > boliviaNow)
+            {
+                nextShot = candidate;
+                break;
+            }
+        }
 
-        if (target <= DateTime.Now) target = target.AddDays(1);
-        return target - DateTime.Now;
+        var nextShotUtc = TimeZoneInfo.ConvertTimeToUtc(nextShot, BoliviaZone);
+        var delay = nextShotUtc - DateTime.UtcNow;
+        return delay < TimeSpan.Zero ? TimeSpan.FromSeconds(1) : delay;
+    }
+
+    private void LogScheduler(string msg)
+    {
+        try
+        {
+            Directory.CreateDirectory(_cfg.BackupDirectory);
+            var boliviaNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, BoliviaZone);
+            var line = $"[{boliviaNow:yyyy-MM-dd HH:mm:ss} BOT] [SCHEDULER] {msg}";
+            File.AppendAllText(Path.Combine(_cfg.BackupDirectory, "backup.log"), line + Environment.NewLine);
+        }
+        catch { }
     }
 
     public void Dispose()
     {
-        _timerTest?.Dispose();
         _timerScheduled?.Dispose();
+        _timerCatchup?.Dispose();
     }
 }
+
+

@@ -2,7 +2,7 @@ namespace SysCondaWizard;
 
 public enum AppSourceKind
 {
-    ExistingDirectory, // reused to mean "embedded" source
+    ExistingDirectory,
     ZipArchive,
     GitRepository
 }
@@ -10,6 +10,10 @@ public enum AppSourceKind
 /// <summary>All user inputs collected across wizard steps.</summary>
 public class WizardConfig
 {
+    // ── Backup window defaults (change here to adjust the UI placeholder) ─────
+    public const string DefaultBackupWindowStart = "08:00";
+    public const string DefaultBackupWindowEnd = "18:00";
+
     // ── Step 1: Install root + source ────────────────────────────────────────
     public string RootDirectory { get; set; } = AppProfile.DefaultRootDir;
     public AppSourceKind AppSource { get; set; } = AppSourceKind.ExistingDirectory;
@@ -38,10 +42,10 @@ public class WizardConfig
     public bool EnableBackups { get; set; } = true;
     public string PgDumpPath { get; set; } = PostgresBinaryLocator.FindPgDumpPath();
     public string PgRestorePath { get; set; } = PostgresBinaryLocator.FindPgRestorePath();
-    public string BackupWindowStart { get; set; } = "08:00"; // start of backup window
-    public string BackupWindowEnd { get; set; } = "17:00";   // end of backup window
-    // fires every 3h within window → 08:00 / 11:00 / 14:00 / 17:00
-    public string BackupDays { get; set; } = "MON,TUE,WED,THU,FRI,SAT";
+    public string BackupWindowStart { get; set; } = DefaultBackupWindowStart;
+    public string BackupWindowEnd { get; set; } = DefaultBackupWindowEnd;
+    // Always all 7 days — window period is the control, not specific days
+    public string BackupDays { get; set; } = "MON,TUE,WED,THU,FRI,SAT,SUN";
     public bool RestoreDatabaseOnInstall { get; set; } = false;
     public string RestoreDumpPath { get; set; } = "";
     public bool BackupTestMode { get; set; } = false;
@@ -54,6 +58,7 @@ public class WizardConfig
     public string ServiceConfigPath => Path.Combine(ServiceRuntimeDirectory, "service-config.json");
     public string ServiceLogDirectory => Path.Combine(RootDirectory, "logs");
     public string BackupDirectory => Path.Combine(RootDirectory, "backups");
+    public string InstallConfigPath => GetInstallConfigPath(RootDirectory);
 
     // ── Env file ─────────────────────────────────────────────────────────────
     public string DatabaseUrl =>
@@ -77,28 +82,98 @@ public class WizardConfig
         """;
 
     // ── Persistence ──────────────────────────────────────────────────────────
-    public static string ConfigFilePath =>
+    public static string LegacyConfigFilePath =>
         Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
             "SysCondaWizard",
             "wizard-config.json");
 
-    public static WizardConfig Load()
+    public static string ConfigFilePath => ResolveConfigFilePath() ?? LegacyConfigFilePath;
+
+    public static string GetInstallConfigPath(string rootDirectory) =>
+        Path.Combine(rootDirectory, "wizard-config.json");
+
+    public static IEnumerable<string> EnumerateKnownConfigPaths(string? rootDirectory = null)
     {
-        if (!File.Exists(ConfigFilePath)) return new WizardConfig();
-        try
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var yieldReturnList = new List<string>();
+
+        void Add(string? path)
         {
-            return System.Text.Json.JsonSerializer.Deserialize<WizardConfig>(
-                File.ReadAllText(ConfigFilePath)) ?? new WizardConfig();
+            if (string.IsNullOrWhiteSpace(path)) return;
+            var fullPath = Path.GetFullPath(path);
+            if (seen.Add(fullPath))
+                yieldReturnList.Add(fullPath);
         }
-        catch { return new WizardConfig(); }
+
+        if (!string.IsNullOrWhiteSpace(rootDirectory))
+            Add(GetInstallConfigPath(rootDirectory));
+
+        Add(ResolveConfigFilePath());
+        Add(LegacyConfigFilePath);
+
+        return yieldReturnList;
+    }
+
+    public static WizardConfig Load(string? rootDirectory = null)
+    {
+        foreach (var path in EnumerateKnownConfigPaths(rootDirectory))
+        {
+            if (!File.Exists(path)) continue;
+            try
+            {
+                var cfg = System.Text.Json.JsonSerializer.Deserialize<WizardConfig>(File.ReadAllText(path));
+                if (cfg != null)
+                    return cfg;
+            }
+            catch
+            {
+            }
+        }
+
+        return new WizardConfig();
     }
 
     public void Save()
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(ConfigFilePath)!);
-        File.WriteAllText(ConfigFilePath,
+        var path = !string.IsNullOrWhiteSpace(RootDirectory)
+            ? InstallConfigPath
+            : LegacyConfigFilePath;
+
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path,
             System.Text.Json.JsonSerializer.Serialize(this,
                 new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+
+        if (!string.Equals(path, LegacyConfigFilePath, StringComparison.OrdinalIgnoreCase) && File.Exists(LegacyConfigFilePath))
+        {
+            try { File.Delete(LegacyConfigFilePath); } catch { }
+        }
+    }
+
+    private static string? ResolveConfigFilePath()
+    {
+        var appBase = AppContext.BaseDirectory;
+        var directPath = Path.Combine(appBase, "wizard-config.json");
+        if (File.Exists(directPath)) return directPath;
+
+        var serviceConfig = Path.Combine(appBase, "service-config.json");
+        if (File.Exists(serviceConfig))
+        {
+            var root = Directory.GetParent(appBase)?.FullName;
+            if (!string.IsNullOrWhiteSpace(root))
+                return GetInstallConfigPath(root);
+        }
+
+        var baseDirName = Path.GetFileName(appBase.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        if (string.Equals(baseDirName, "runtime", StringComparison.OrdinalIgnoreCase))
+        {
+            var root = Directory.GetParent(appBase)?.FullName;
+            if (!string.IsNullOrWhiteSpace(root))
+                return GetInstallConfigPath(root);
+        }
+
+        return null;
     }
 }
+

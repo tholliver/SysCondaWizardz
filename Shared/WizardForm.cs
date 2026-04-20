@@ -116,6 +116,28 @@ public class WizardForm : Form
         btnRow.Controls.Add(_btnNext);
         _footerPanel.Controls.Add(btnRow);
 
+        var btnUninstall = new Button
+        {
+            Text      = "🗑 Desinstalar",
+            Width     = 120,
+            Height    = 34,
+            FlatStyle = FlatStyle.Flat,
+            BackColor = Color.FromArgb(220, 53, 69),
+            ForeColor = Color.White,
+            Cursor    = Cursors.Hand,
+            Margin    = new Padding(0, 0, 0, 0),
+            Font      = new Font("Segoe UI", 9f),
+            Dock      = DockStyle.Left,
+        };
+        btnUninstall.FlatAppearance.BorderColor = Color.FromArgb(220, 53, 69);
+        btnUninstall.Click += (_, _) =>
+        {
+            var cfg = WizardConfig.Load();
+            using var dlg = new UninstallForm(cfg);
+            dlg.ShowDialog(this);
+        };
+        _footerPanel.Controls.Add(btnUninstall);
+
         _layout.Controls.Add(_stepsBar, 0, 0);
         _layout.Controls.Add(_headerPanel, 0, 1);
         _layout.Controls.Add(_stepPanel, 0, 2);
@@ -278,6 +300,8 @@ internal class StepsBar : Control
         }
     }
 }
+
+
 
 
 
