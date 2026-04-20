@@ -82,6 +82,7 @@ public class Step5_Install : IWizardStep
                 ? "La instalación anterior no terminó. Revisa el log y vuelve a intentarlo.\n"
                 : "Pulsa ▶ Iniciar instalación para comenzar.\n", LogLevel.Info);
         Log($"  Raíz        : {cfg.RootDirectory}", LogLevel.Info);
+        Log($"  Modo        : {(cfg.IsUpdateMode ? "actualización" : "instalación nueva")}", LogLevel.Info);
         Log($"  Bun         : {cfg.BunExePath}", LogLevel.Info);
         Log($"  App         : {cfg.AppDirectory}", LogLevel.Info);
         Log($"  Origen      : {DescribeSource(cfg)}", LogLevel.Info);
@@ -122,57 +123,68 @@ public class Step5_Install : IWizardStep
             await InstallBunAsync();
             Tick();
 
-            // 4 ── Extract / copy project source ──────────────────────────
-            Log("\n[4/x] Preparando código fuente...", LogLevel.Step);
+            if (_cfg.IsUpdateMode && _cfg.InstallAsService)
+            {
+                Log("\n[4/x] Deteniendo servicio existente para actualizar...", LogLevel.Step);
+                TryStopServiceForUpdate();
+                Tick();
+            }
+
+            // 5 ── Extract / copy project source ──────────────────────────
+            Log("\n[5/x] Preparando código fuente...", LogLevel.Step);
             await PrepareSourceAsync();
             Tick();
 
-            // 5 ── Write .env ──────────────────────────────────────────────
-            Log("\n[5/x] Escribiendo .env...", LogLevel.Step);
+            // 6 ── Write .env ──────────────────────────────────────────────
+            Log("\n[6/x] Escribiendo .env...", LogLevel.Step);
             var envPath = Path.Combine(_cfg.AppDirectory, ".env");
             _cfg.BetterAuthSecret = ResolveBetterAuthSecret(envPath);
             await File.WriteAllTextAsync(envPath, _cfg.EnvFileContent());
             Log($"  ✓ {envPath}", LogLevel.Ok);
             Tick();
 
-            // 6 ── bun install ─────────────────────────────────────────────
-            Log("\n[6/x] Instalando dependencias (bun install)...", LogLevel.Step);
+            // 7 ── bun install ─────────────────────────────────────────────
+            Log("\n[7/x] Instalando dependencias (bun install)...", LogLevel.Step);
             await RunCmd(_cfg.BunExePath, "install", _cfg.AppDirectory);
             Tick();
 
-            // 7 ── Run Drizzle migrations (schema push) ────────────────────
-            Log("\n[7/x] Aplicando esquema de base de datos (drizzle)...", LogLevel.Step);
+            // 8 ── Run Drizzle migrations (schema push) ────────────────────
+            Log("\n[8/x] Aplicando esquema de base de datos (drizzle)...", LogLevel.Step);
             await RunDrizzleMigrations();
             Tick();
 
-            // 8 ── bun run build ───────────────────────────────────────────
-            Log("\n[8/x] Compilando app Astro/Bun (bun run build)...", LogLevel.Step);
+            // 9 ── bun run build ───────────────────────────────────────────
+            Log("\n[9/x] Compilando app Astro/Bun (bun run build)...", LogLevel.Step);
             await RunCmd(_cfg.BunExePath, "run build", _cfg.AppDirectory);
             EnsureBuildOutput();
             Tick();
 
-            // 9 ── (optional) Restore DB ───────────────────────────────────
+            // 10 ── (optional) Restore DB ──────────────────────────────────
             if (_cfg.RestoreDatabaseOnInstall)
             {
-                Log("\n[9/x] Restaurando base de datos...", LogLevel.Step);
+                Log("\n[10/x] Restaurando base de datos...", LogLevel.Step);
                 await RestoreDatabaseIfAvailable();
                 Tick();
             }
 
             if (_cfg.EnableBackups)
             {
-                Log("\n[10/x] Configurando backup automatico...", LogLevel.Step);
+                Log("\n[11/x] Configurando backup automático...", LogLevel.Step);
                 await SetupBackup();
                 Tick();
             }
 
-            // 11 ── (optional) Windows service ────────────────────────────
+            // 12 ── (optional) Windows service ────────────────────────────
             if (_cfg.InstallAsService)
             {
-                Log("\n[11/x] Instalando servicio de Windows...", LogLevel.Step);
+                Log("\n[12/x] Instalando servicio de Windows...", LogLevel.Step);
                 InstallWindowsService();
                 Tick();
             }
+
+            Log("\n[13/x] Registrando manifiesto de release...", LogLevel.Step);
+            WriteReleaseManifest();
+            Tick();
 
             SetProgress(100);
             HasCompleted = true;
@@ -413,7 +425,24 @@ public class Step5_Install : IWizardStep
             case AppSourceKind.ExistingDirectory:
                 Log("  Extrayendo fuente embebida...", LogLevel.Info);
                 EnsureDirectoryReady(_cfg.AppDirectory, allowExistingProject: true);
-                await EmbeddedSourceExtractor.ExtractToAsync(_cfg.AppDirectory);
+                if (_cfg.IsUpdateMode)
+                {
+                    var tempRoot = Path.Combine(Path.GetTempPath(), $"{AppProfile.ServiceName}-embedded-{Guid.NewGuid():N}");
+                    Directory.CreateDirectory(tempRoot);
+                    try
+                    {
+                        await EmbeddedSourceExtractor.ExtractToAsync(tempRoot);
+                        SyncDirectory(tempRoot, _cfg.AppDirectory);
+                    }
+                    finally
+                    {
+                        try { Directory.Delete(tempRoot, recursive: true); } catch { }
+                    }
+                }
+                else
+                {
+                    await EmbeddedSourceExtractor.ExtractToAsync(_cfg.AppDirectory);
+                }
                 Log($"  ✓ Fuente extraída en: {_cfg.AppDirectory}", LogLevel.Ok);
                 break;
             case AppSourceKind.ZipArchive:
@@ -441,7 +470,7 @@ public class Step5_Install : IWizardStep
         {
             ZipFile.ExtractToDirectory(_cfg.SourceZipPath, tempRoot);
             var extractedRoot = ResolveExtractedProjectRoot(tempRoot);
-            CopyDirectory(extractedRoot, _cfg.AppDirectory);
+            SyncDirectory(extractedRoot, _cfg.AppDirectory);
             Log($"  ✓ ZIP extraído en: {_cfg.AppDirectory}", LogLevel.Ok);
         }
         finally
@@ -461,6 +490,22 @@ public class Step5_Install : IWizardStep
             ?? throw new Exception("No se pudo resolver la carpeta padre para el clone de Git.");
 
         Directory.CreateDirectory(parentDir);
+        if (_cfg.IsUpdateMode)
+        {
+            var tempClone = Path.Combine(parentDir, $"{AppProfile.ServiceName}-update-{Guid.NewGuid():N}");
+            await RunCmd("git", $"clone {_cfg.GitRepoUrl} \"{tempClone}\"", parentDir);
+            try
+            {
+                SyncDirectory(tempClone, _cfg.AppDirectory);
+            }
+            finally
+            {
+                try { Directory.Delete(tempClone, recursive: true); } catch { }
+            }
+            Log($"  ✓ Repositorio sincronizado en: {_cfg.AppDirectory}", LogLevel.Ok);
+            return;
+        }
+
         await RunCmd("git", $"clone {_cfg.GitRepoUrl} \"{_cfg.AppDirectory}\"", parentDir);
         Log($"  ✓ Repositorio clonado en: {_cfg.AppDirectory}", LogLevel.Ok);
     }
@@ -468,7 +513,7 @@ public class Step5_Install : IWizardStep
     private void EnsureDirectoryReady(string targetDir, bool allowExistingProject)
     {
         if (!Directory.Exists(targetDir)) { Directory.CreateDirectory(targetDir); return; }
-        if (allowExistingProject) return;
+        if (allowExistingProject || _cfg.IsUpdateMode) return;
         if (Directory.EnumerateFileSystemEntries(targetDir).Any())
             throw new Exception(
                 $"La carpeta destino ya contiene archivos: {targetDir}.\n" +
@@ -506,7 +551,7 @@ public class Step5_Install : IWizardStep
         Log($"  ✓ Build SSR lista: {entryMjs}", LogLevel.Ok);
     }
 
-    private static void CopyDirectory(string sourceDir, string destDir)
+    private static void SyncDirectory(string sourceDir, string destDir)
     {
         var excluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -533,6 +578,28 @@ public class Step5_Install : IWizardStep
             var target = Path.Combine(destDir, rel);
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
             File.Copy(file, target, overwrite: true);
+        }
+
+        var expected = new HashSet<string>(
+            Directory.GetFiles(sourceDir, "*", SearchOption.AllDirectories)
+                .Select(file => Path.GetRelativePath(sourceDir, file)),
+            StringComparer.OrdinalIgnoreCase);
+
+        foreach (var file in Directory.GetFiles(destDir, "*", SearchOption.AllDirectories))
+        {
+            var rel = Path.GetRelativePath(destDir, file);
+            if (IsExcluded(rel)) continue;
+            if (!expected.Contains(rel))
+                File.Delete(file);
+        }
+
+        foreach (var dir in Directory.GetDirectories(destDir, "*", SearchOption.AllDirectories)
+                     .OrderByDescending(path => path.Length))
+        {
+            var rel = Path.GetRelativePath(destDir, dir);
+            if (IsExcluded(rel)) continue;
+            if (!Directory.EnumerateFileSystemEntries(dir).Any())
+                Directory.Delete(dir);
         }
     }
 
@@ -739,11 +806,34 @@ public class Step5_Install : IWizardStep
 
     private int CountSteps()
     {
-        int n = 7; // pg check + db ensure + bun + source + .env + bun install + drizzle + build
+        int n = 9;
+        if (_cfg.IsUpdateMode && _cfg.InstallAsService) n++;
         if (_cfg.RestoreDatabaseOnInstall) n++;
         if (_cfg.InstallAsService) n++;
         if (_cfg.EnableBackups) n++;
         return n;
+    }
+
+    private void TryStopServiceForUpdate()
+    {
+        try
+        {
+            RunSc("stop", _cfg.ServiceName);
+            Log($"  ✓ Servicio '{_cfg.ServiceName}' detenido para la actualización.", LogLevel.Ok);
+        }
+        catch (Exception ex)
+        {
+            Log($"  ! No se pudo detener el servicio antes de actualizar: {ex.Message}", LogLevel.Warn);
+        }
+    }
+
+    private void WriteReleaseManifest()
+    {
+        _cfg.Save();
+        var manifest = AppReleaseManifest.Capture(_cfg, DescribeSource(_cfg));
+        manifest.Save(_cfg.ReleaseManifestPath);
+        Log($"  ✓ Manifiesto SHA-256 escrito en {_cfg.ReleaseManifestPath}", LogLevel.Ok);
+        Log($"  ✓ Release registrado: {manifest.ReleaseId}", LogLevel.Ok);
     }
 
     private void SetProgress(int val)
@@ -803,4 +893,6 @@ public class Step5_Install : IWizardStep
     public string? Validate(WizardConfig cfg) => null;
     public void Save(WizardConfig cfg) => _cfg = cfg;
 }
+
+
 

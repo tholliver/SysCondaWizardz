@@ -38,7 +38,35 @@ static class Program
             return;
         }
 
+        WarnIfInstalledReleaseLooksCorrupted();
         Application.Run(new WizardForm());
+    }
+
+    static void WarnIfInstalledReleaseLooksCorrupted()
+    {
+        try
+        {
+            var cfg = WizardConfig.Load();
+            if (string.IsNullOrWhiteSpace(cfg.RootDirectory) || !File.Exists(cfg.ReleaseManifestPath))
+                return;
+
+            if (!AppReleaseManifest.TryVerify(cfg, out var manifest, out var result))
+                return;
+
+            if (result.IsValid)
+                return;
+
+            MessageBox.Show(
+                $"Se detectaron archivos modificados o dañados en la instalación actual de {manifest.AppName}.\n\n" +
+                $"{result.ToDisplayText()}\n\n" +
+                "Puedes continuar para ejecutar una actualización/reinstalación del release.",
+                $"{AppProfile.AppName} — Integridad",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+        catch
+        {
+        }
     }
 
     static void PrintStatus()
@@ -278,3 +306,4 @@ static class Program
         return principal.IsInRole(WindowsBuiltInRole.Administrator);
     }
 }
+

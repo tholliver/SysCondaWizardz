@@ -8,6 +8,8 @@ public class Step1_Location : IWizardStep
     private TextBox _txtRoot = new();
     private TextBox _txtGitUrl = new();
     private TextBox _txtZipPath = new();
+    private RadioButton _rbInstall = new();
+    private RadioButton _rbUpdate = new();
     private RadioButton _rbEmbed = new();
     private RadioButton _rbZip = new();
     private RadioButton _rbGit = new();
@@ -17,6 +19,24 @@ public class Step1_Location : IWizardStep
     public Control BuildUI(WizardConfig cfg)
     {
         var root = WizardUi.MakeScrollPanel();
+
+        WizardUi.SectionLabel(root, "Modo de despliegue");
+        WizardUi.Hint(root,
+            "Instalación: crea una nueva carpeta release.\n" +
+            "Actualización: conserva la configuración actual, vuelve a desplegar los archivos Astro y recompila.");
+
+        _rbInstall = CreateSourceRadio("Nueva instalación", cfg.Mode == InstallMode.Install);
+        _rbUpdate = CreateSourceRadio("Actualizar instalación existente", cfg.Mode == InstallMode.Update);
+        WizardUi.AddRow(root, _rbInstall);
+        WizardUi.AddRow(root, _rbUpdate);
+
+        WizardUi.InfoBox(root,
+            "Update profesional recomendado:\n" +
+            "1. Parar el servicio.\n" +
+            "2. Verificar integridad del release actual.\n" +
+            "3. Reemplazar código Astro con un release nuevo.\n" +
+            "4. Ejecutar bun install, migraciones y build.\n" +
+            "5. Escribir un manifiesto SHA-256 del release y volver a iniciar el servicio.");
 
         WizardUi.SectionLabel(root, "Origen del proyecto");
         WizardUi.Hint(root,
@@ -31,14 +51,12 @@ public class Step1_Location : IWizardStep
         WizardUi.AddRow(root, _rbZip);
         WizardUi.AddRow(root, _rbGit);
 
-        // ── ZIP source ────────────────────────────────────────────────────────
         _zipPanel = new Panel { Height = 88, Margin = new Padding(0, 8, 0, 0), Visible = cfg.AppSource == AppSourceKind.ZipArchive };
         WizardUi.SectionLabel(_zipPanel, "Archivo ZIP");
         WizardUi.Hint(_zipPanel, "El ZIP puede venir con la app en la raíz o dentro de una carpeta principal.");
         WizardUi.AddRow(_zipPanel, BuildFileRow(cfg.SourceZipPath, "*.zip", tb => _txtZipPath = tb));
         WizardUi.AddRow(root, _zipPanel);
 
-        // ── Git source ────────────────────────────────────────────────────────
         _gitPanel = new Panel { Height = 88, Margin = new Padding(0, 8, 0, 0), Visible = cfg.AppSource == AppSourceKind.GitRepository };
         WizardUi.SectionLabel(_gitPanel, "Repositorio Git");
         WizardUi.Hint(_gitPanel, "Clona el proyecto en la carpeta destino y construye con Bun.");
@@ -46,7 +64,6 @@ public class Step1_Location : IWizardStep
         WizardUi.AddRow(_gitPanel, _txtGitUrl);
         WizardUi.AddRow(root, _gitPanel);
 
-        // ── Install root ──────────────────────────────────────────────────────
         WizardUi.SectionLabel(root, "Directorio raíz de instalación");
         WizardUi.Hint(root,
             "Todo se instala bajo esta carpeta:\n" +
@@ -73,12 +90,12 @@ public class Step1_Location : IWizardStep
         RefreshSourcePanels();
 
         WizardUi.InfoBox(root,
-            "Flujo de instalación:\n" +
+            "Flujo de despliegue:\n" +
             "1. Instalar bun en <raíz>\\bun\\  (accesible por SYSTEM).\n" +
-            "2. Extraer proyecto en <raíz>\\app\\  (sin node_modules ni dist).\n" +
+            "2. Sincronizar proyecto en <raíz>\\app\\  (sin node_modules ni dist).\n" +
             "3. Escribir .env.\n" +
-            "4. bun install + bun run build.\n" +
-            "5. Registrar servicio de Windows.");
+            "4. bun install + drizzle push + bun run build.\n" +
+            "5. Registrar/verificar release y servicio de Windows.");
 
         return root;
     }
@@ -101,6 +118,14 @@ public class Step1_Location : IWizardStep
         if (_rbGit.Checked && string.IsNullOrWhiteSpace(_txtGitUrl.Text.Trim()))
             return "Ingresa la URL del repositorio Git.";
 
+        if (_rbUpdate.Checked)
+        {
+            var hasConfig = File.Exists(WizardConfig.GetInstallConfigPath(rootDir));
+            var hasApp = Directory.Exists(Path.Combine(rootDir, "app"));
+            if (!hasConfig && !hasApp)
+                return "Para actualizar, la carpeta raíz debe contener una instalación existente o su wizard-config.json.";
+        }
+
         if (_rbEmbed.Checked && !EmbeddedSourceExtractor.IsAvailable)
             return "Este ejecutable no contiene una fuente embebida.\n" +
                    "Recompila el wizard con SysCondaSourceDir configurado en el .csproj, o usa ZIP/Git.";
@@ -110,15 +135,34 @@ public class Step1_Location : IWizardStep
 
     public void Save(WizardConfig cfg)
     {
-        cfg.RootDirectory = _txtRoot.Text.Trim();
+        var rootDir = _txtRoot.Text.Trim();
+        cfg.RootDirectory = rootDir;
+        cfg.Mode = _rbUpdate.Checked ? InstallMode.Update : InstallMode.Install;
         cfg.SourceZipPath = _txtZipPath.Text.Trim();
         cfg.GitRepoUrl = _txtGitUrl.Text.Trim();
-        // ExistingDirectory is reused to mean "embedded" — no path needed
         cfg.AppSource = _rbZip.Checked
             ? AppSourceKind.ZipArchive
             : _rbGit.Checked
                 ? AppSourceKind.GitRepository
                 : AppSourceKind.ExistingDirectory;
+
+        if (cfg.IsUpdateMode)
+        {
+            var existing = WizardConfig.Load(rootDir);
+            if (!string.IsNullOrWhiteSpace(existing.RootDirectory))
+            {
+                cfg.ApplyInstalledSettings(existing);
+                cfg.RootDirectory = rootDir;
+                cfg.Mode = InstallMode.Update;
+                cfg.SourceZipPath = _txtZipPath.Text.Trim();
+                cfg.GitRepoUrl = _txtGitUrl.Text.Trim();
+                cfg.AppSource = _rbZip.Checked
+                    ? AppSourceKind.ZipArchive
+                    : _rbGit.Checked
+                        ? AppSourceKind.GitRepository
+                        : AppSourceKind.ExistingDirectory;
+            }
+        }
     }
 
     private static RadioButton CreateSourceRadio(string text, bool isChecked) => new()

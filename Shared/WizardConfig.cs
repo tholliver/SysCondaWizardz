@@ -7,6 +7,12 @@ public enum AppSourceKind
     GitRepository
 }
 
+public enum InstallMode
+{
+    Install,
+    Update
+}
+
 /// <summary>All user inputs collected across wizard steps.</summary>
 public class WizardConfig
 {
@@ -16,6 +22,7 @@ public class WizardConfig
 
     // ── Step 1: Install root + source ────────────────────────────────────────
     public string RootDirectory { get; set; } = AppProfile.DefaultRootDir;
+    public InstallMode Mode { get; set; } = InstallMode.Install;
     public AppSourceKind AppSource { get; set; } = AppSourceKind.ExistingDirectory;
     public string SourceZipPath { get; set; } = "";
     public string GitRepoUrl { get; set; } = "";
@@ -59,6 +66,8 @@ public class WizardConfig
     public string ServiceLogDirectory => Path.Combine(RootDirectory, "logs");
     public string BackupDirectory => Path.Combine(RootDirectory, "backups");
     public string InstallConfigPath => GetInstallConfigPath(RootDirectory);
+    public string ReleaseManifestPath => Path.Combine(RootDirectory, "app-release.json");
+    public bool IsUpdateMode => Mode == InstallMode.Update;
 
     // ── Env file ─────────────────────────────────────────────────────────────
     public string DatabaseUrl =>
@@ -175,5 +184,31 @@ public class WizardConfig
 
         return null;
     }
-}
 
+    public void ApplyInstalledSettings(WizardConfig installed)
+    {
+        DbHost = installed.DbHost;
+        DbPort = installed.DbPort;
+        DbName = installed.DbName;
+        DbUser = installed.DbUser;
+        DbPassword = installed.DbPassword;
+        AppUrl = installed.AppUrl;
+        AppPort = installed.AppPort;
+        BetterAuthSecret = installed.BetterAuthSecret;
+        RateLimitWindow = installed.RateLimitWindow;
+        MaxAttempts = installed.MaxAttempts;
+        ServiceName = installed.ServiceName;
+        ServiceDisplayName = installed.ServiceDisplayName;
+        InstallAsService = installed.InstallAsService;
+        ServiceRestartDelaySeconds = installed.ServiceRestartDelaySeconds;
+        EnableBackups = installed.EnableBackups;
+        PgDumpPath = installed.PgDumpPath;
+        PgRestorePath = installed.PgRestorePath;
+        BackupWindowStart = installed.BackupWindowStart;
+        BackupWindowEnd = installed.BackupWindowEnd;
+        BackupDays = installed.BackupDays;
+        RestoreDatabaseOnInstall = installed.RestoreDatabaseOnInstall;
+        RestoreDumpPath = installed.RestoreDumpPath;
+        BackupTestMode = installed.BackupTestMode;
+    }
+}

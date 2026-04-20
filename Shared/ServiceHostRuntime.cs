@@ -86,6 +86,7 @@ internal sealed class BunWindowsService : ServiceBase
                 var startLog = Path.Combine(_config.LogDirectory, "service-startup.log");
                 File.AppendAllText(startLog,
                     $"[{DateTimeOffset.Now:u}] Starting — bun={_config.BunExecutable} entry={_config.EntryPoint} dir={_config.AppDirectory}\n");
+                VerifyInstalledReleaseIntegrity();
                 StartChildProcess();
 
                 // START BACKUP AFTER PROCESS IS UP
@@ -240,6 +241,25 @@ internal sealed class BunWindowsService : ServiceBase
         _stdoutWriter = null;
         _stderrWriter = null;
     }
+
+    private void VerifyInstalledReleaseIntegrity()
+    {
+        var rootDirectory = Directory.GetParent(_config.LogDirectory)?.FullName;
+        if (string.IsNullOrWhiteSpace(rootDirectory))
+            return;
+
+        var cfg = WizardConfig.Load(rootDirectory);
+        if (!File.Exists(cfg.ReleaseManifestPath))
+            return;
+
+        if (!AppReleaseManifest.TryVerify(cfg, out var manifest, out var result))
+            return;
+
+        if (!result.IsValid)
+            throw new InvalidOperationException(
+                $"La verificación de integridad del release '{manifest.ReleaseId}' falló.{Environment.NewLine}" +
+                result.ToDisplayText());
+    }
 }
 
 internal static class ServiceStartupLogger
@@ -302,4 +322,6 @@ internal static class EnvFileLoader
         return values;
     }
 }
+
+
 
