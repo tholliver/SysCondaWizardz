@@ -20,7 +20,7 @@ public class WizardForm : Form
     private readonly Button _btnCancel = new();
     private readonly StepsBar _stepsBar = new();
 
-    private static readonly Color Accent      = Color.FromArgb(79, 70, 229);
+    private static readonly Color Accent = Color.FromArgb(79, 70, 229);
     private static readonly Color AccentHover = Color.FromArgb(99, 88, 255);
 
     public WizardForm()
@@ -37,19 +37,28 @@ public class WizardForm : Form
         ];
 
         InitializeForm();
+
+        // ── Auto-detect existing install and pre-populate config ──────────
+        var existing = WizardConfig.Load();
+        if (!string.IsNullOrWhiteSpace(existing.RootDirectory)
+            && Directory.Exists(existing.RootDirectory))
+        {
+            _config = existing;
+        }
+
         LoadStep(_currentStep);
     }
 
     private void InitializeForm()
     {
-        Text            = AppProfile.WizardTitle;
-        Size            = new Size(1000, 720);
-        MinimumSize     = new Size(800, 600);
-        StartPosition   = FormStartPosition.CenterScreen;
-        Font            = new Font("Segoe UI", 9.5f);
-        BackColor       = Color.White;
+        Text = AppProfile.WizardTitle;
+        Size = new Size(1000, 720);
+        MinimumSize = new Size(800, 600);
+        StartPosition = FormStartPosition.CenterScreen;
+        Font = new Font("Segoe UI", 9.5f);
+        BackColor = Color.White;
         FormBorderStyle = FormBorderStyle.Sizable;
-        MaximizeBox     = true;
+        MaximizeBox = true;
 
         _layout.Dock = DockStyle.Fill;
         _layout.Margin = new Padding(0);
@@ -62,37 +71,37 @@ public class WizardForm : Form
         _layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         _layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 60));
 
-        _headerPanel.Dock      = DockStyle.Fill;
+        _headerPanel.Dock = DockStyle.Fill;
         _headerPanel.BackColor = Accent;
-        _headerPanel.Padding   = new Padding(24, 14, 24, 12);
-        _headerPanel.Margin    = new Padding(0);
+        _headerPanel.Padding = new Padding(24, 14, 24, 12);
+        _headerPanel.Margin = new Padding(0);
 
-        _titleLabel.AutoSize  = false;
-        _titleLabel.Dock      = DockStyle.Fill;
+        _titleLabel.AutoSize = false;
+        _titleLabel.Dock = DockStyle.Fill;
         _titleLabel.ForeColor = Color.White;
-        _titleLabel.Font      = new Font("Segoe UI Semibold", 17f);
+        _titleLabel.Font = new Font("Segoe UI Semibold", 17f);
         _titleLabel.TextAlign = ContentAlignment.MiddleLeft;
         _headerPanel.Controls.Add(_titleLabel);
 
-        _stepsBar.Dock   = DockStyle.Fill;
-        _stepsBar.Names  = ["Origen", "Entorno", "Servicio", "Backup", "Instalar"];
+        _stepsBar.Dock = DockStyle.Fill;
+        _stepsBar.Names = ["Origen", "Entorno", "Servicio", "Backup", "Instalar"];
         _stepsBar.Margin = new Padding(0);
 
-        _stepPanel.Dock    = DockStyle.Fill;
+        _stepPanel.Dock = DockStyle.Fill;
         _stepPanel.Padding = new Padding(24, 18, 24, 12);
-        _stepPanel.Margin  = new Padding(0);
+        _stepPanel.Margin = new Padding(0);
 
-        _footerPanel.Dock      = DockStyle.Fill;
+        _footerPanel.Dock = DockStyle.Fill;
         _footerPanel.BackColor = Color.FromArgb(248, 248, 252);
-        _footerPanel.Padding   = new Padding(12, 12, 20, 0);
-        _footerPanel.Margin    = new Padding(0);
+        _footerPanel.Padding = new Padding(12, 12, 20, 0);
+        _footerPanel.Margin = new Padding(0);
 
         var sep = new Panel { Dock = DockStyle.Top, Height = 1, BackColor = Color.FromArgb(220, 220, 230) };
         _footerPanel.Controls.Add(sep);
 
-        StyleButton(_btnCancel, "Cancelar",    false);
-        StyleButton(_btnBack,   "← Atrás",     false);
-        StyleButton(_btnNext,   "Siguiente →", true);
+        StyleButton(_btnCancel, "Cancelar", false);
+        StyleButton(_btnBack, "← Atrás", false);
+        StyleButton(_btnNext, "Siguiente →", true);
         _btnNext.Width = 132;
 
         _btnCancel.Click += (_, _) =>
@@ -105,11 +114,11 @@ public class WizardForm : Form
 
         var btnRow = new FlowLayoutPanel
         {
-            Dock          = DockStyle.Right,
-            AutoSize      = true,
+            Dock = DockStyle.Right,
+            AutoSize = true,
             FlowDirection = FlowDirection.LeftToRight,
-            WrapContents  = false,
-            Padding       = new Padding(0),
+            WrapContents = false,
+            Padding = new Padding(0),
         };
         btnRow.Controls.Add(_btnCancel);
         btnRow.Controls.Add(_btnBack);
@@ -118,16 +127,16 @@ public class WizardForm : Form
 
         var btnUninstall = new Button
         {
-            Text      = "🗑 Desinstalar",
-            Width     = 120,
-            Height    = 34,
+            Text = "🗑 Desinstalar",
+            Width = 120,
+            Height = 34,
             FlatStyle = FlatStyle.Flat,
             BackColor = Color.FromArgb(220, 53, 69),
             ForeColor = Color.White,
-            Cursor    = Cursors.Hand,
-            Margin    = new Padding(0, 0, 0, 0),
-            Font      = new Font("Segoe UI", 9f),
-            Dock      = DockStyle.Left,
+            Cursor = Cursors.Hand,
+            Margin = new Padding(0, 0, 0, 0),
+            Font = new Font("Segoe UI", 9f),
+            Dock = DockStyle.Left,
         };
         btnUninstall.FlatAppearance.BorderColor = Color.FromArgb(220, 53, 69);
         btnUninstall.Click += (_, _) =>
@@ -147,26 +156,26 @@ public class WizardForm : Form
 
     private static void StyleButton(Button btn, string text, bool primary)
     {
-        btn.Text      = text;
-        btn.Width     = 110;
-        btn.Height    = 34;
+        btn.Text = text;
+        btn.Width = 110;
+        btn.Height = 34;
         btn.FlatStyle = FlatStyle.Flat;
-        btn.Cursor    = Cursors.Hand;
-        btn.Margin    = new Padding(6, 0, 0, 0);
-        btn.Font      = new Font("Segoe UI", 9.5f);
+        btn.Cursor = Cursors.Hand;
+        btn.Margin = new Padding(6, 0, 0, 0);
+        btn.Font = new Font("Segoe UI", 9.5f);
 
         if (primary)
         {
-            btn.BackColor                  = Accent;
-            btn.ForeColor                  = Color.White;
+            btn.BackColor = Accent;
+            btn.ForeColor = Color.White;
             btn.FlatAppearance.BorderColor = Accent;
             btn.MouseEnter += (_, _) => btn.BackColor = AccentHover;
             btn.MouseLeave += (_, _) => btn.BackColor = Accent;
         }
         else
         {
-            btn.BackColor                  = Color.White;
-            btn.ForeColor                  = Color.FromArgb(60, 60, 80);
+            btn.BackColor = Color.White;
+            btn.ForeColor = Color.FromArgb(60, 60, 80);
             btn.FlatAppearance.BorderColor = Color.FromArgb(200, 200, 215);
         }
     }
@@ -201,9 +210,58 @@ public class WizardForm : Form
     {
         _stepPanel.Controls.Clear();
         var step = _steps[index];
-        var ctl  = step.BuildUI(_config);
-        ctl.Dock = DockStyle.Fill;
-        _stepPanel.Controls.Add(ctl);
+        var ctl = step.BuildUI(_config);
+
+        // ── Inject quick-update panel at the top of Step 1 when an install exists ──
+        if (index == 0)
+        {
+            var existing = WizardConfig.Load();
+            if (!string.IsNullOrWhiteSpace(existing.RootDirectory)
+                && Directory.Exists(existing.RootDirectory))
+            {
+                var scrollHost = new Panel { Dock = DockStyle.Fill };
+                var quickPanel = new QuickUpdatePanel(existing);
+
+                quickPanel.QuickUpdateRequested += async () =>
+                {
+                    // Auto-configure for update and jump straight to Step 5
+                    _config = existing;
+                    _config.Mode = InstallMode.Update;
+
+                    // Auto-pick embedded source if available, otherwise keep Git/Zip
+                    if (_config.AppSource == AppSourceKind.ExistingDirectory
+                        && !EmbeddedSourceExtractor.IsAvailable)
+                    {
+                        ShowError(
+                            "Este ejecutable no tiene fuente embebida.\n" +
+                            "Usa el flujo completo con ZIP o Git para actualizar.");
+                        return;
+                    }
+
+                    _currentStep = _steps.Length - 1; // jump to Step 5
+                    LoadStep(_currentStep);
+                    await _installStep.RunInstallAsync();
+                };
+
+                quickPanel.Dock = DockStyle.Top;
+                ctl.Dock = DockStyle.Fill;
+
+                scrollHost.Controls.Add(ctl);
+                scrollHost.Controls.Add(quickPanel); // DockStyle.Top draws above Fill
+                _stepPanel.Controls.Add(scrollHost);
+            }
+            else
+            {
+                ctl.Dock = DockStyle.Fill;
+                _stepPanel.Controls.Add(ctl);
+            }
+        }
+        else
+        {
+            ctl.Dock = DockStyle.Fill;
+            _stepPanel.Controls.Add(ctl);
+        }
+
         _titleLabel.Text = step.Title;
         _stepsBar.Active = index;
         _stepsBar.Invalidate();
@@ -216,14 +274,14 @@ public class WizardForm : Form
         if (InvokeRequired) { BeginInvoke(RefreshNavigationState); return; }
 
         var isLast = _currentStep == _steps.Length - 1;
-        _btnBack.Enabled   = _currentStep > 0 && !_installStep.IsRunning;
+        _btnBack.Enabled = _currentStep > 0 && !_installStep.IsRunning;
         _btnCancel.Enabled = !_installStep.IsRunning;
 
         if (!isLast) { _btnNext.Enabled = true; _btnNext.Text = "Siguiente →"; return; }
 
         _btnNext.Enabled = !_installStep.IsRunning || _installStep.HasCompleted;
-        _btnNext.Text    = _installStep.HasCompleted ? "Cerrar"
-                         : _installStep.IsRunning    ? "Instalando..."
+        _btnNext.Text = _installStep.HasCompleted ? "Cerrar"
+                         : _installStep.IsRunning ? "Instalando..."
                          : _installStep.HasAttempted ? "Reintentar instalación"
                                                      : "Iniciar instalación";
     }
@@ -255,10 +313,10 @@ internal class StepsBar : Control
         set { _active = value; Invalidate(); }
     }
 
-    private static readonly Color Done    = Color.FromArgb(79, 70, 229);
+    private static readonly Color Done = Color.FromArgb(79, 70, 229);
     private static readonly Color Current = Color.FromArgb(48, 42, 180);
-    private static readonly Color Idle    = Color.FromArgb(205, 208, 224);
-    private static readonly Color BgClr   = Color.FromArgb(247, 247, 252);
+    private static readonly Color Idle = Color.FromArgb(205, 208, 224);
+    private static readonly Color BgClr = Color.FromArgb(247, 247, 252);
 
     public StepsBar() { DoubleBuffered = true; BackColor = BgClr; ResizeRedraw = true; }
 
@@ -271,10 +329,10 @@ internal class StepsBar : Control
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.Clear(BgClr);
 
-        var rect         = ClientRectangle;
-        var lineY        = 16f;
-        var startX       = 28f;
-        var endX         = Math.Max(startX, rect.Width - 28f);
+        var rect = ClientRectangle;
+        var lineY = 16f;
+        var startX = 28f;
+        var endX = Math.Max(startX, rect.Width - 28f);
         var segmentWidth = Names.Length == 1 ? 0 : (endX - startX) / (Names.Length - 1);
 
         using (var p = new Pen(Idle, 6f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
@@ -285,8 +343,8 @@ internal class StepsBar : Control
             g.DrawLine(p, startX, lineY, progressX, lineY);
 
         using var activeFont = new Font("Segoe UI Semibold", 8.5f);
-        using var idleFont   = new Font("Segoe UI", 8.5f);
-        using var sf         = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Near };
+        using var idleFont = new Font("Segoe UI", 8.5f);
+        using var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Near };
 
         for (var i = 0; i < Names.Length; i++)
         {
@@ -300,8 +358,3 @@ internal class StepsBar : Control
         }
     }
 }
-
-
-
-
-
