@@ -7,9 +7,9 @@ namespace SysCondaWizard;
 public static class WizardUi
 {
     private static readonly Color SectionColor = Color.FromArgb(50, 50, 120);
-    private static readonly Color HintColor    = Color.FromArgb(110, 110, 130);
-    private static readonly Color InfoBg       = Color.FromArgb(238, 242, 255);
-    private static readonly Color InfoBorder   = Color.FromArgb(180, 190, 240);
+    private static readonly Color HintColor = Color.FromArgb(110, 110, 130);
+    private static readonly Color InfoBg = Color.FromArgb(238, 242, 255);
+    private static readonly Color InfoBorder = Color.FromArgb(180, 190, 240);
     private const int DefaultContentWidth = 660;
     private const int MinContentWidth = 260;
 
@@ -19,8 +19,8 @@ public static class WizardUi
         var panel = new Panel
         {
             AutoScroll = true,
-            AutoSize   = false,
-            Padding    = new Padding(4, 0, 4, 8),
+            AutoSize = false,
+            Padding = new Padding(4, 0, 4, 8),
         };
 
         panel.Resize += (_, _) => RefreshLayout(panel);
@@ -32,11 +32,11 @@ public static class WizardUi
     {
         var lbl = new Label
         {
-            Text      = text,
-            AutoSize  = true,
-            Font      = new Font("Segoe UI Semibold", 10f),
+            Text = text,
+            AutoSize = true,
+            Font = new Font("Segoe UI Semibold", 10f),
             ForeColor = SectionColor,
-            Margin    = new Padding(0, 10, 0, 2),
+            Margin = new Padding(0, 10, 0, 2),
         };
         AddRow(parent, lbl);
     }
@@ -44,15 +44,16 @@ public static class WizardUi
     /// <summary>Muted hint text.</summary>
     public static void Hint(Control parent, string text)
     {
+        // Width is constrained by ApplyWidth() in AddRow; height grows with line count.
         var lbl = new Label
         {
-            Text      = text,
-            AutoSize  = false,
-            Height    = (text.Split('\n').Length) * 18,
-            Width     = 640,
+            Text = text,
+            AutoSize = false,
+            Height = (text.Split('\n').Length + 1) * 17,
+            Width = DefaultContentWidth,
             ForeColor = HintColor,
-            Font      = new Font("Segoe UI", 8.5f),
-            Margin    = new Padding(0, 0, 0, 4),
+            Font = new Font("Segoe UI", 8.5f),
+            Margin = new Padding(0, 0, 0, 4),
         };
         AddRow(parent, lbl);
     }
@@ -62,10 +63,10 @@ public static class WizardUi
     {
         var sep = new Panel
         {
-            Height    = 1,
-            Width     = 640,
+            Height = 1,
+            Width = 640,
             BackColor = Color.FromArgb(220, 220, 235),
-            Margin    = new Padding(0, 10, 0, 4),
+            Margin = new Padding(0, 10, 0, 4),
         };
         AddRow(parent, sep);
     }
@@ -74,13 +75,13 @@ public static class WizardUi
     public static void InfoBox(Control parent, string text)
     {
         var lines = text.Split('\n').Length;
-        var box   = new Panel
+        var box = new Panel
         {
-            Width     = 640,
-            Height    = lines * 18 + 16,
+            Width = DefaultContentWidth,
+            Height = lines * 18 + 16,
             BackColor = InfoBg,
-            Margin    = new Padding(0, 12, 0, 0),
-            Padding   = new Padding(10, 6, 10, 6),
+            Margin = new Padding(0, 12, 0, 0),
+            Padding = new Padding(10, 6, 10, 6),
         };
         box.Paint += (_, e) =>
         {
@@ -89,11 +90,11 @@ public static class WizardUi
         };
         var lbl = new Label
         {
-            Text      = text,
-            AutoSize  = false,
-            Dock      = DockStyle.Fill,
+            Text = text,
+            AutoSize = false,
+            Dock = DockStyle.Fill,
             ForeColor = Color.FromArgb(60, 60, 160),
-            Font      = new Font("Segoe UI", 8.5f),
+            Font = new Font("Segoe UI", 8.5f),
         };
         box.Controls.Add(lbl);
         AddRow(parent, box);
@@ -104,9 +105,9 @@ public static class WizardUi
     {
         var tb = new TextBox
         {
-            Text        = value,
+            Text = value,
             BorderStyle = BorderStyle.FixedSingle,
-            Height      = 24,
+            Height = 24,
         };
         if (!string.IsNullOrEmpty(placeholder) && string.IsNullOrEmpty(value))
             tb.ForeColor = Color.FromArgb(160, 160, 175);
@@ -119,14 +120,14 @@ public static class WizardUi
     {
         return new Button
         {
-            Text      = text,
-            Width     = width,
-            Height    = 26,
+            Text = text,
+            Width = width,
+            Height = 26,
             FlatStyle = FlatStyle.Flat,
             BackColor = Color.FromArgb(240, 240, 250),
             ForeColor = Color.FromArgb(60, 60, 100),
-            Cursor    = Cursors.Hand,
-            Font      = new Font("Segoe UI", 8.5f),
+            Cursor = Cursors.Hand,
+            Font = new Font("Segoe UI", 8.5f),
         };
     }
 
@@ -151,7 +152,7 @@ public static class WizardUi
             if (bottom > nextY) nextY = bottom;
         }
 
-        child.Dock     = DockStyle.None;
+        child.Dock = DockStyle.None;
         child.Location = new Point(parent.Padding.Left, nextY + child.Margin.Top);
         ApplyWidth(parent, child);
 
@@ -194,6 +195,3 @@ public static class WizardUi
         }
     }
 }
-
-
-

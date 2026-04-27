@@ -84,7 +84,7 @@ public class WizardForm : Form
         _headerPanel.Controls.Add(_titleLabel);
 
         _stepsBar.Dock = DockStyle.Fill;
-        _stepsBar.Names = ["Origen", "Entorno", "Servicio", "Backup", "Instalar"];
+        _stepsBar.Names = ["Origen", "Entorno", "Backup", "Instalar"];
         _stepsBar.Margin = new Padding(0);
 
         _stepPanel.Dock = DockStyle.Fill;
@@ -180,6 +180,10 @@ public class WizardForm : Form
         }
     }
 
+    // Index of Step3_Service inside _steps — it has no UI page, so we skip it
+    // in both forward and backward navigation.
+    private const int ServiceStepIndex = 2;
+
     private async Task HandleNextAsync()
     {
         var err = _steps[_currentStep].Validate(_config);
@@ -190,6 +194,14 @@ public class WizardForm : Form
         if (_currentStep < _steps.Length - 1)
         {
             _currentStep++;
+
+            // Step3_Service has no UI — apply its constants silently and skip it.
+            if (_currentStep == ServiceStepIndex)
+            {
+                _steps[ServiceStepIndex].Save(_config);
+                _currentStep++;
+            }
+
             LoadStep(_currentStep);
             return;
         }
@@ -202,7 +214,13 @@ public class WizardForm : Form
     private void Navigate(int delta)
     {
         if (_installStep.IsRunning) return;
+
         _currentStep = Math.Clamp(_currentStep + delta, 0, _steps.Length - 1);
+
+        // Skip Step3_Service in both directions — it has no UI page.
+        if (_currentStep == ServiceStepIndex)
+            _currentStep = Math.Clamp(_currentStep + delta, 0, _steps.Length - 1);
+
         LoadStep(_currentStep);
     }
 
@@ -263,7 +281,8 @@ public class WizardForm : Form
         }
 
         _titleLabel.Text = step.Title;
-        _stepsBar.Active = index;
+        // Map internal step index to visible bar index (ServiceStep has no UI page)
+        _stepsBar.Active = index > ServiceStepIndex ? index - 1 : index;
         _stepsBar.Invalidate();
         RefreshNavigationState();
     }
