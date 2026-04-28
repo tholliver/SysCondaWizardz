@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace SysCondaWizard;
 
@@ -14,8 +15,12 @@ internal sealed class AppReleaseManifest
     public string SourceDescription { get; set; } = "";
     public string InstallMode { get; set; } = "";
     public DateTimeOffset InstalledAtUtc { get; set; }
-    public List<ManifestFileEntry> AppFiles { get; set; } = new();
-    public List<ManifestFileEntry> RuntimeFiles { get; set; } = new();
+    public ManifestDirectorySnapshot? AppSnapshot { get; set; }
+    public ManifestDirectorySnapshot? RuntimeSnapshot { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<ManifestFileEntry>? AppFiles { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<ManifestFileEntry>? RuntimeFiles { get; set; }
 
     public static AppReleaseManifest Capture(WizardConfig cfg, string sourceDescription)
     {
@@ -25,19 +30,23 @@ internal sealed class AppReleaseManifest
             ?? "1.0.0";
 
         var wizardSha = ComputeSha256(exePath);
+        var appSnapshot = CaptureDirectorySnapshot(cfg.AppDirectory, GetAppExcludedNames());
+        var runtimeSnapshot = Directory.Exists(cfg.ServiceRuntimeDirectory)
+            ? CaptureDirectorySnapshot(cfg.ServiceRuntimeDirectory, Array.Empty<string>())
+            : null;
         return new AppReleaseManifest
         {
             AppName = AppProfile.AppName,
-            ReleaseId = $"{exeVersion}+{wizardSha[..12]}",
+            ReleaseId = $"{exeVersion}+{wizardSha[..8]}",
             WizardVersion = exeVersion,
             WizardExecutableSha256 = wizardSha,
             SourceDescription = sourceDescription,
             InstallMode = cfg.IsUpdateMode ? "update" : "install",
             InstalledAtUtc = DateTimeOffset.UtcNow,
-            AppFiles = CaptureDirectory(cfg.AppDirectory, GetAppExcludedNames()),
-            RuntimeFiles = Directory.Exists(cfg.ServiceRuntimeDirectory)
-                ? CaptureDirectory(cfg.ServiceRuntimeDirectory, Array.Empty<string>())
-                : new List<ManifestFileEntry>(),
+            AppSnapshot = appSnapshot,
+            RuntimeSnapshot = runtimeSnapshot,
+            AppFiles = null,
+            RuntimeFiles = null,
         };
     }
 
@@ -65,9 +74,23 @@ internal sealed class AppReleaseManifest
     public AppReleaseVerificationResult Verify(WizardConfig cfg)
     {
         var issues = new List<string>();
-        VerifyDirectory(cfg.AppDirectory, AppFiles, GetAppExcludedNames(), "app", issues);
-        if (RuntimeFiles.Count > 0)
-            VerifyDirectory(cfg.ServiceRuntimeDirectory, RuntimeFiles, Array.Empty<string>(), "runtime", issues);
+        VerifyDirectory(
+            cfg.AppDirectory,
+            AppSnapshot,
+            AppFiles ?? [],
+            GetAppExcludedNames(),
+            "app",
+            issues);
+        if (RuntimeSnapshot != null || (RuntimeFiles?.Count ?? 0) > 0)
+        {
+            VerifyDirectory(
+                cfg.ServiceRuntimeDirectory,
+                RuntimeSnapshot,
+                RuntimeFiles ?? [],
+                Array.Empty<string>(),
+                "runtime",
+                issues);
+        }
 
         return new AppReleaseVerificationResult
         {
@@ -93,22 +116,38 @@ internal sealed class AppReleaseManifest
         return true;
     }
 
+    private static ManifestDirectorySnapshot CaptureDirectorySnapshot(string root, IReadOnlyCollection<string> excludedNames)
+    {
+        var fingerprints = EnumerateDirectoryFingerprints(root, excludedNames).ToList();
+        using var sha = SHA256.Create();
+        using var stream = new MemoryStream();
+        using (var writer = new StreamWriter(stream, leaveOpen: true))
+        {
+            foreach (var fingerprint in fingerprints)
+                writer.WriteLine($"{fingerprint.Path}|{fingerprint.Sha256}");
+            writer.Flush();
+        }
+
+        stream.Position = 0;
+        return new ManifestDirectorySnapshot
+        {
+            FileCount = fingerprints.Count,
+            Sha256 = Convert.ToHexString(sha.ComputeHash(stream)),
+        };
+    }
+
     private static List<ManifestFileEntry> CaptureDirectory(string root, IReadOnlyCollection<string> excludedNames)
     {
         var files = new List<ManifestFileEntry>();
         if (!Directory.Exists(root))
             return files;
 
-        foreach (var file in Directory.GetFiles(root, "*", SearchOption.AllDirectories).OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+        foreach (var fingerprint in EnumerateDirectoryFingerprints(root, excludedNames))
         {
-            var rel = Path.GetRelativePath(root, file);
-            if (ShouldExclude(rel, excludedNames))
-                continue;
-
             files.Add(new ManifestFileEntry
             {
-                Path = rel.Replace(Path.DirectorySeparatorChar, '/'),
-                Sha256 = ComputeSha256(file),
+                Path = fingerprint.Path,
+                Sha256 = fingerprint.Sha256,
             });
         }
 
@@ -117,6 +156,7 @@ internal sealed class AppReleaseManifest
 
     private static void VerifyDirectory(
         string root,
+        ManifestDirectorySnapshot? expectedSnapshot,
         IReadOnlyCollection<ManifestFileEntry> expectedFiles,
         IReadOnlyCollection<string> excludedNames,
         string label,
@@ -125,6 +165,16 @@ internal sealed class AppReleaseManifest
         if (!Directory.Exists(root))
         {
             issues.Add($"Falta el directorio {label}: {root}");
+            return;
+        }
+
+        if (expectedSnapshot != null)
+        {
+            var actualSnapshot = CaptureDirectorySnapshot(root, excludedNames);
+            if (!string.Equals(actualSnapshot.Sha256, expectedSnapshot.Sha256, StringComparison.OrdinalIgnoreCase))
+                issues.Add($"SHA-256 resumido distinto en {label}");
+            if (actualSnapshot.FileCount != expectedSnapshot.FileCount)
+                issues.Add($"Cantidad de archivos distinta en {label}: {actualSnapshot.FileCount} != {expectedSnapshot.FileCount}");
             return;
         }
 
@@ -163,6 +213,25 @@ internal sealed class AppReleaseManifest
         return parts.Any(part => excludedNames.Contains(part, StringComparer.OrdinalIgnoreCase));
     }
 
+    private static IEnumerable<ManifestFileEntry> EnumerateDirectoryFingerprints(string root, IReadOnlyCollection<string> excludedNames)
+    {
+        if (!Directory.Exists(root))
+            yield break;
+
+        foreach (var file in Directory.GetFiles(root, "*", SearchOption.AllDirectories).OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+        {
+            var rel = Path.GetRelativePath(root, file);
+            if (ShouldExclude(rel, excludedNames))
+                continue;
+
+            yield return new ManifestFileEntry
+            {
+                Path = rel.Replace(Path.DirectorySeparatorChar, '/'),
+                Sha256 = ComputeSha256(file),
+            };
+        }
+    }
+
     private static string ComputeSha256(string path)
     {
         using var stream = File.OpenRead(path);
@@ -176,6 +245,12 @@ internal sealed class AppReleaseManifest
 internal sealed class ManifestFileEntry
 {
     public string Path { get; set; } = "";
+    public string Sha256 { get; set; } = "";
+}
+
+internal sealed class ManifestDirectorySnapshot
+{
+    public int FileCount { get; set; }
     public string Sha256 { get; set; } = "";
 }
 

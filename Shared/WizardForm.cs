@@ -243,8 +243,13 @@ public class WizardForm : Form
                 quickPanel.QuickUpdateRequested += async () =>
                 {
                     // Auto-configure for update and jump straight to Step 5
-                    _config = existing;
+                    var installed = WizardConfig.Load(existing.RootDirectory);
+                    _config = !string.IsNullOrWhiteSpace(installed.RootDirectory)
+                        ? installed
+                        : existing;
+                    _config.RootDirectory = existing.RootDirectory;
                     _config.Mode = InstallMode.Update;
+                    _config.AppSource = AppSourceKind.ExistingDirectory;
 
                     // Auto-pick embedded source if available, otherwise keep Git/Zip
                     if (_config.AppSource == AppSourceKind.ExistingDirectory

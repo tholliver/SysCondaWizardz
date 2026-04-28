@@ -241,19 +241,22 @@ public class Step5_Install : IWizardStep
         psi.Environment["PGPASSWORD"] = _cfg.DbPassword;
         psi.Environment["PGCONNECT_TIMEOUT"] = "10";
 
-        using var proc = Process.Start(psi)!;
-        var stdout = await proc.StandardOutput.ReadToEndAsync();
-        var stderr = await proc.StandardError.ReadToEndAsync();
-        await proc.WaitForExitAsync();
+        var result = await RunProcessCaptureAsync(psi, TimeSpan.FromSeconds(15), "Verificando conexion a PostgreSQL");
 
-        if (proc.ExitCode != 0)
+        if (result.TimedOut)
+            throw new Exception(
+                $"No se pudo conectar a PostgreSQL dentro del tiempo esperado.\n" +
+                $"Host: {_cfg.DbHost}:{_cfg.DbPort} | Usuario: {_cfg.DbUser}\n" +
+                "Verifica host, puerto, usuario y contraseña en el paso anterior.");
+
+        if (result.ExitCode != 0)
             throw new Exception(
                 $"No se pudo conectar a PostgreSQL.\n" +
                 $"Host: {_cfg.DbHost}:{_cfg.DbPort} | Usuario: {_cfg.DbUser}\n" +
-                $"Error: {stderr.Trim()}\n\n" +
+                $"Error: {result.Stderr.Trim()}\n\n" +
                 "Verifica host, puerto, usuario y contraseña en el paso anterior.");
 
-        var version = stdout.Trim();
+        var version = result.Stdout.Trim();
         Log($"  ✓ Conectado: {version}", LogLevel.Ok);
     }
 
@@ -283,12 +286,21 @@ public class Step5_Install : IWizardStep
             RedirectStandardError = true,
         };
         psiCheck.Environment["PGPASSWORD"] = _cfg.DbPassword;
+        psiCheck.Environment["PGCONNECT_TIMEOUT"] = "10";
 
-        using var checkProc = Process.Start(psiCheck)!;
-        var checkOut = await checkProc.StandardOutput.ReadToEndAsync();
-        await checkProc.WaitForExitAsync();
+        var checkResult = await RunProcessCaptureAsync(psiCheck, TimeSpan.FromSeconds(15), "Verificando existencia de base de datos");
 
-        if (checkOut.Trim() == "1")
+        if (checkResult.TimedOut)
+            throw new Exception(
+                $"La verificacion de la base de datos excedio el tiempo limite.\n" +
+                $"Host: {_cfg.DbHost}:{_cfg.DbPort} | Base: {_cfg.DbName}");
+
+        if (checkResult.ExitCode != 0)
+            throw new Exception(
+                $"No se pudo verificar si la base de datos existe.\n" +
+                $"Error: {checkResult.Stderr.Trim()}");
+
+        if (checkResult.Stdout.Trim() == "1")
         {
             Log($"  ✓ Base de datos '{_cfg.DbName}' ya existe.", LogLevel.Ok);
             return;
@@ -311,15 +323,17 @@ public class Step5_Install : IWizardStep
             RedirectStandardError = true,
         };
         psiCreate.Environment["PGPASSWORD"] = _cfg.DbPassword;
+        psiCreate.Environment["PGCONNECT_TIMEOUT"] = "10";
 
-        using var createProc = Process.Start(psiCreate)!;
-        var createErr = await createProc.StandardError.ReadToEndAsync();
-        await createProc.WaitForExitAsync();
+        var createResult = await RunProcessCaptureAsync(psiCreate, TimeSpan.FromSeconds(20), $"Creando base de datos '{_cfg.DbName}'");
 
-        if (createProc.ExitCode != 0)
+        if (createResult.TimedOut)
+            throw new Exception($"La creacion de la base de datos '{_cfg.DbName}' excedio el tiempo limite.");
+
+        if (createResult.ExitCode != 0)
             throw new Exception(
                 $"No se pudo crear la base de datos '{_cfg.DbName}'.\n" +
-                $"Error: {createErr.Trim()}");
+                $"Error: {createResult.Stderr.Trim()}");
 
         Log($"  ✓ Base de datos '{_cfg.DbName}' creada con encoding UTF8.", LogLevel.Ok);
     }
@@ -804,6 +818,35 @@ public class Step5_Install : IWizardStep
             throw new Exception($"'{exe} {args}' falló con código {proc.ExitCode}");
     }
 
+    private static async Task<ProcessCaptureResult> RunProcessCaptureAsync(
+        ProcessStartInfo psi,
+        TimeSpan timeout,
+        string operation)
+    {
+        using var proc = Process.Start(psi)
+            ?? throw new Exception($"No se pudo iniciar el proceso para: {operation}");
+
+        var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+        var stderrTask = proc.StandardError.ReadToEndAsync();
+        var waitTask = proc.WaitForExitAsync();
+        var timeoutTask = Task.Delay(timeout);
+
+        if (await Task.WhenAny(waitTask, timeoutTask) != waitTask)
+        {
+            try { proc.Kill(entireProcessTree: true); } catch { }
+            var timedOutStdout = await stdoutTask;
+            var timedOutStderr = await stderrTask;
+            return new ProcessCaptureResult(-1, timedOutStdout, timedOutStderr, TimedOut: true);
+        }
+
+        await waitTask;
+        var stdout = await stdoutTask;
+        var stderr = await stderrTask;
+        return new ProcessCaptureResult(proc.ExitCode, stdout, stderr, TimedOut: false);
+    }
+
+    private sealed record ProcessCaptureResult(int ExitCode, string Stdout, string Stderr, bool TimedOut);
+
     private int CountSteps()
     {
         int n = 9;
@@ -893,6 +936,4 @@ public class Step5_Install : IWizardStep
     public string? Validate(WizardConfig cfg) => null;
     public void Save(WizardConfig cfg) => _cfg = cfg;
 }
-
-
 
