@@ -182,11 +182,9 @@ public class Step5_Install : IWizardStep
                 Tick();
             }
 
-            // 13 ── Firewall rule — always on fresh install, opt-in on update ──
-            // Fresh install: always opens the port so the app is immediately reachable.
-            // Update: only re-applies the rule if the user checked the checkbox.
-            // The rule is silently deleted first (idempotent) so re-runs are always clean.
-            if (!_cfg.IsUpdateMode || _cfg.OpenFirewallPort)
+            // 13 ── Firewall rule ─────────────────────────────────────────
+            // Service installs must be reachable from the LAN after updates too.
+            if (ShouldConfigureFirewall())
             {
                 Log($"\n[13/x] Abriendo puerto {_cfg.AppPort} en el Firewall...", LogLevel.Step);
                 OpenFirewallPort();
@@ -197,12 +195,26 @@ public class Step5_Install : IWizardStep
             WriteReleaseManifest();
             Tick();
 
+            if (_cfg.InstallAsService)
+            {
+                Log("\n[15/x] Iniciando servicio y verificando puerto...", LogLevel.Step);
+                StartWindowsServiceAndVerify();
+                Tick();
+            }
+
             SetProgress(100);
             HasCompleted = true;
             Log("\n══════════════════════════════════════════", LogLevel.Ok);
             Log("  ✅  Instalación completada con éxito", LogLevel.Ok);
             Log("══════════════════════════════════════════", LogLevel.Ok);
-            Log($"\n  Accede a la app en: http://localhost:{_cfg.AppPort}/", LogLevel.Info);
+            var lanIp = System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()
+                .SelectMany(n => n.GetIPProperties().UnicastAddresses)
+                .FirstOrDefault(a => a.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork
+                                  && !System.Net.IPAddress.IsLoopback(a.Address))
+                ?.Address.ToString() ?? "localhost";
+
+            Log($"\n  Accede localmente en : http://localhost:{_cfg.AppPort}/", LogLevel.Info);
+            Log($"  Accede en la red en  : http://{lanIp}:{_cfg.AppPort}/", LogLevel.Info);
             Log($"  Raíz de instalación: {_cfg.RootDirectory}", LogLevel.Info);
             if (_cfg.InstallAsService)
                 Log($"\n  Servicio '{_cfg.ServiceName}': sc start {_cfg.ServiceName}", LogLevel.Info);
@@ -379,8 +391,10 @@ public class Step5_Install : IWizardStep
         }
         catch (Exception ex)
         {
-            Log($"  ! drizzle-kit push: {ex.Message}", LogLevel.Warn);
-            Log("    Continuando — si es reinstalación el esquema ya existe.", LogLevel.Warn);
+            throw new Exception(
+                "drizzle-kit push no pudo aplicar el esquema. " +
+                "La instalación se detuvo para evitar arrancar la app con una base de datos inconsistente.\n" +
+                ex.Message);
         }
     }
 
@@ -632,9 +646,12 @@ public class Step5_Install : IWizardStep
 
     // ── Firewall rule ─────────────────────────────────────────────────────────
     // Uses netsh via RunProcessCaptureAsync — CreateNoWindow = true, no cmd window ever.
-    // Called on every fresh install regardless of checkbox.
-    // Called on update only if OpenFirewallPort checkbox was explicitly checked.
+    // Called on every service install/update so LAN access remains consistent.
+    // Also called on non-service fresh installs, or if the user explicitly asks for it.
     // The delete pass runs first so re-installs are always idempotent.
+
+    private bool ShouldConfigureFirewall() =>
+        _cfg.InstallAsService || !_cfg.IsUpdateMode || _cfg.OpenFirewallPort;
 
     private void OpenFirewallPort()
     {
@@ -652,6 +669,15 @@ public class Step5_Install : IWizardStep
             throw new Exception($"No se pudo abrir el puerto {_cfg.AppPort} en el Firewall.\n{stderr}");
 
         Log($"  ✓ Puerto {_cfg.AppPort} abierto en Firewall (TCP entrante).", LogLevel.Ok);
+
+        // ── HTTP URL reservation so non-admin Bun can bind to 0.0.0.0 ──
+        var url = $"http://+:{_cfg.AppPort}/";
+        RunNetsh($"http delete urlacl url={url}"); // idempotent cleanup first
+        var (urlCode, urlErr) = RunNetsh($"http add urlacl url={url} user=Everyone");
+        if (urlCode != 0)
+            Log($"  ⚠ No se pudo registrar urlacl para {url} (puede requerir modo admin): {urlErr}", LogLevel.Warn);
+        else
+            Log($"  ✓ URL reservation registrada: {url}", LogLevel.Ok);
     }
 
     /// <summary>
@@ -661,6 +687,7 @@ public class Step5_Install : IWizardStep
     public static bool RemoveFirewallRule(string port)
     {
         var (exitCode, _) = RunNetsh($"advfirewall firewall delete rule name=\"{FirewallRuleName(port)}\"");
+        RunNetsh($"http delete urlacl url=http://+:{port}/"); // cleanup reservation
         return exitCode == 0;
     }
 
@@ -737,10 +764,14 @@ public class Step5_Install : IWizardStep
 
         RunSc("failureflag", _cfg.ServiceName, "1");
 
-        Thread.Sleep(3000);
-        RunSc("start", _cfg.ServiceName);
+        Log($"  ✓ Servicio '{_cfg.ServiceName}' instalado.", LogLevel.Ok);
+    }
 
-        Log($"  ✓ Servicio '{_cfg.ServiceName}' instalado e iniciado.", LogLevel.Ok);
+    private void StartWindowsServiceAndVerify()
+    {
+        RunSc("start", _cfg.ServiceName);
+        WaitForTcpPort(_cfg.AppPort, TimeSpan.FromSeconds(30));
+        Log($"  ✓ Servicio '{_cfg.ServiceName}' iniciado y escuchando en puerto {_cfg.AppPort}.", LogLevel.Ok);
     }
 
     private string DeployServiceRuntime()
@@ -791,6 +822,36 @@ public class Step5_Install : IWizardStep
         if (!string.IsNullOrWhiteSpace(stderr)) Log("  " + stderr.TrimEnd(), LogLevel.Warn);
         if (p.ExitCode != 0)
             throw new Exception($"sc.exe falló (código {p.ExitCode}): {string.Join(" ", args)}");
+    }
+
+    private static void WaitForTcpPort(string portText, TimeSpan timeout)
+    {
+        if (!int.TryParse(portText, out var port))
+            throw new Exception($"Puerto invalido: {portText}");
+
+        var deadline = DateTimeOffset.UtcNow + timeout;
+        Exception? lastError = null;
+
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            using var client = new System.Net.Sockets.TcpClient();
+            try
+            {
+                var connectTask = client.ConnectAsync("127.0.0.1", port);
+                if (connectTask.Wait(TimeSpan.FromMilliseconds(750)) && client.Connected)
+                    return;
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+            }
+
+            Thread.Sleep(500);
+        }
+
+        throw new Exception(
+            $"El servicio inició, pero no abrió localhost:{port} dentro de {timeout.TotalSeconds:0}s." +
+            (lastError == null ? "" : $"\nÚltimo error: {lastError.Message}"));
     }
 
     // ── Backup ────────────────────────────────────────────────────────────────
@@ -915,7 +976,8 @@ public class Step5_Install : IWizardStep
         if (_cfg.RestoreDatabaseOnInstall) n++;               // step 10
         if (_cfg.EnableBackups) n++;                          // step 11
         if (_cfg.InstallAsService) n++;                       // step 12
-        if (!_cfg.IsUpdateMode || _cfg.OpenFirewallPort) n++; // step 13 — always fresh, opt-in update
+        if (ShouldConfigureFirewall()) n++;                   // step 13
+        if (_cfg.InstallAsService) n++;                       // step 15 start + port verification
         return n;                                             // step 14 manifest always counted in base 9
     }
 

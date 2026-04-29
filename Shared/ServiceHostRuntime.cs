@@ -252,6 +252,10 @@ internal sealed class BunWindowsService : ServiceBase
         if (!File.Exists(cfg.ReleaseManifestPath))
             return;
 
+        // Skip integrity check in dev/debug mode
+        if (File.Exists(Path.Combine(rootDirectory, ".skip-integrity")))
+            return;
+
         if (!AppReleaseManifest.TryVerify(cfg, out var manifest, out var result))
             return;
 
@@ -322,6 +326,3 @@ internal static class EnvFileLoader
         return values;
     }
 }
-
-
-
