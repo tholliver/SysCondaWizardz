@@ -182,6 +182,14 @@ public class Step5_Install : IWizardStep
                 Tick();
             }
 
+            // 13 ── (optional) Firewall rule ──────────────────────────────
+            if (_cfg.OpenFirewallPort)
+            {
+                Log($"\n[13/x] Abriendo puerto {_cfg.AppPort} en el Firewall...", LogLevel.Step);
+                OpenFirewallPort();
+                Tick();
+            }
+
             Log("\n[13/x] Registrando manifiesto de release...", LogLevel.Step);
             WriteReleaseManifest();
             Tick();
@@ -627,6 +635,43 @@ public class Step5_Install : IWizardStep
         _ => "desconocido"
     };
 
+    // Firewall rule
+    private void OpenFirewallPort()
+    {
+        var ruleName = $"{AppProfile.ServiceDisplay} Port {_cfg.AppPort}";
+
+        // Remove existing rule silently first (idempotent)
+        var psiDel = new ProcessStartInfo
+        {
+            FileName = "netsh.exe",
+            Arguments = $"advfirewall firewall delete rule name=\"{ruleName}\"",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        using (var p = Process.Start(psiDel)!) { p.WaitForExit(); }
+
+        // Add the new rule
+        var psi = new ProcessStartInfo
+        {
+            FileName = "netsh.exe",
+            Arguments = $"advfirewall firewall add rule name=\"{ruleName}\" dir=in action=allow protocol=TCP localport={_cfg.AppPort}",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        using var proc = Process.Start(psi)!;
+        var stderr = proc.StandardError.ReadToEnd();
+        proc.WaitForExit();
+
+        if (proc.ExitCode != 0)
+            throw new Exception($"No se pudo abrir el puerto {_cfg.AppPort} en el Firewall.\n{stderr}");
+
+        Log($"  ✓ Puerto {_cfg.AppPort} abierto en Firewall (solo TCP entrante, red local).", LogLevel.Ok);
+    }
+
     // ── Windows service ───────────────────────────────────────────────────────
 
     private void InstallWindowsService()
@@ -854,6 +899,7 @@ public class Step5_Install : IWizardStep
         if (_cfg.RestoreDatabaseOnInstall) n++;
         if (_cfg.InstallAsService) n++;
         if (_cfg.EnableBackups) n++;
+        if (_cfg.OpenFirewallPort) n++;
         return n;
     }
 
@@ -936,4 +982,3 @@ public class Step5_Install : IWizardStep
     public string? Validate(WizardConfig cfg) => null;
     public void Save(WizardConfig cfg) => _cfg = cfg;
 }
-

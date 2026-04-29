@@ -44,6 +44,7 @@ public class WizardConfig
     public string ServiceDisplayName { get; set; } = AppProfile.ServiceDisplay;
     public bool InstallAsService { get; set; } = true;
     public int ServiceRestartDelaySeconds { get; set; } = 5;
+    public bool OpenFirewallPort { get; set; } = false;
 
     // ── Step 4: Backup ───────────────────────────────────────────────────────
     public bool EnableBackups { get; set; } = true;
@@ -210,5 +211,6 @@ public class WizardConfig
         RestoreDatabaseOnInstall = installed.RestoreDatabaseOnInstall;
         RestoreDumpPath = installed.RestoreDumpPath;
         BackupTestMode = installed.BackupTestMode;
+        OpenFirewallPort = installed.OpenFirewallPort;
     }
 }
