@@ -182,15 +182,18 @@ public class Step5_Install : IWizardStep
                 Tick();
             }
 
-            // 13 ── (optional) Firewall rule ──────────────────────────────
-            if (_cfg.OpenFirewallPort)
+            // 13 ── Firewall rule — always on fresh install, opt-in on update ──
+            // Fresh install: always opens the port so the app is immediately reachable.
+            // Update: only re-applies the rule if the user checked the checkbox.
+            // The rule is silently deleted first (idempotent) so re-runs are always clean.
+            if (!_cfg.IsUpdateMode || _cfg.OpenFirewallPort)
             {
                 Log($"\n[13/x] Abriendo puerto {_cfg.AppPort} en el Firewall...", LogLevel.Step);
                 OpenFirewallPort();
                 Tick();
             }
 
-            Log("\n[13/x] Registrando manifiesto de release...", LogLevel.Step);
+            Log("\n[14/x] Registrando manifiesto de release...", LogLevel.Step);
             WriteReleaseManifest();
             Tick();
 
@@ -239,7 +242,6 @@ public class Step5_Install : IWizardStep
         var psi = new ProcessStartInfo
         {
             FileName = psql,
-            // Connect to postgres (system db) to test credentials without needing our DB yet
             Arguments = $"-h {_cfg.DbHost} -p {_cfg.DbPort} -U {_cfg.DbUser} -d postgres -c \"SELECT version()\" -t -q",
             UseShellExecute = false,
             CreateNoWindow = true,
@@ -282,7 +284,6 @@ public class Step5_Install : IWizardStep
             return;
         }
 
-        // Check if DB already exists
         var psiCheck = new ProcessStartInfo
         {
             FileName = psql,
@@ -314,7 +315,6 @@ public class Step5_Install : IWizardStep
             return;
         }
 
-        // Create it
         Log($"  Creando base de datos '{_cfg.DbName}'...", LogLevel.Info);
 
         if (!File.Exists(createdb))
@@ -350,8 +350,6 @@ public class Step5_Install : IWizardStep
 
     private async Task RunDrizzleMigrations()
     {
-        // drizzle-kit push applies schema without needing migration files
-        // Works for fresh installs AND updates (idempotent)
         var drizzleConfig = Path.Combine(_cfg.AppDirectory, "drizzle.config.ts");
         var drizzleConfigJs = Path.Combine(_cfg.AppDirectory, "drizzle.config.js");
 
@@ -364,7 +362,6 @@ public class Step5_Install : IWizardStep
 
         Log("  Ejecutando drizzle-kit push (aplicar esquema)...", LogLevel.Info);
 
-        // Set DATABASE_URL env for drizzle to connect
         var env = new Dictionary<string, string>
         {
             ["DATABASE_URL"] = _cfg.DatabaseUrl,
@@ -377,13 +374,11 @@ public class Step5_Install : IWizardStep
 
         try
         {
-            // Use bun to run drizzle-kit push with auto-accept (--force skips confirmation prompts)
             await RunCmd(_cfg.BunExePath, "run drizzle-kit push --force", _cfg.AppDirectory, env);
             Log("  ✓ Esquema aplicado correctamente.", LogLevel.Ok);
         }
         catch (Exception ex)
         {
-            // Migration failure is non-fatal on reinstall — schema may already exist
             Log($"  ! drizzle-kit push: {ex.Message}", LogLevel.Warn);
             Log("    Continuando — si es reinstalación el esquema ya existe.", LogLevel.Warn);
         }
@@ -635,41 +630,62 @@ public class Step5_Install : IWizardStep
         _ => "desconocido"
     };
 
-    // Firewall rule
+    // ── Firewall rule ─────────────────────────────────────────────────────────
+    // Uses netsh via RunProcessCaptureAsync — CreateNoWindow = true, no cmd window ever.
+    // Called on every fresh install regardless of checkbox.
+    // Called on update only if OpenFirewallPort checkbox was explicitly checked.
+    // The delete pass runs first so re-installs are always idempotent.
+
     private void OpenFirewallPort()
     {
-        var ruleName = $"{AppProfile.ServiceDisplay} Port {_cfg.AppPort}";
+        var ruleName = FirewallRuleName(_cfg.AppPort);
 
-        // Remove existing rule silently first (idempotent)
-        var psiDel = new ProcessStartInfo
-        {
-            FileName = "netsh.exe",
-            Arguments = $"advfirewall firewall delete rule name=\"{ruleName}\"",
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-        };
-        using (var p = Process.Start(psiDel)!) { p.WaitForExit(); }
+        // Remove any existing rule silently first (idempotent — failure is fine)
+        RunNetsh($"advfirewall firewall delete rule name=\"{ruleName}\"");
 
-        // Add the new rule
+        // Add the inbound TCP rule
+        var (exitCode, stderr) = RunNetsh(
+            $"advfirewall firewall add rule name=\"{ruleName}\"" +
+            $" dir=in action=allow protocol=TCP localport={_cfg.AppPort}");
+
+        if (exitCode != 0)
+            throw new Exception($"No se pudo abrir el puerto {_cfg.AppPort} en el Firewall.\n{stderr}");
+
+        Log($"  ✓ Puerto {_cfg.AppPort} abierto en Firewall (TCP entrante).", LogLevel.Ok);
+    }
+
+    /// <summary>
+    /// Removes the firewall rule that OpenFirewallPort created.
+    /// Called by UninstallForm. Returns true if the rule was found and deleted.
+    /// </summary>
+    public static bool RemoveFirewallRule(string port)
+    {
+        var (exitCode, _) = RunNetsh($"advfirewall firewall delete rule name=\"{FirewallRuleName(port)}\"");
+        return exitCode == 0;
+    }
+
+    private static string FirewallRuleName(string port) =>
+        $"{AppProfile.ServiceDisplay} Port {port}";
+
+    /// <summary>
+    /// Runs netsh.exe without ever showing a console window.
+    /// Returns (exitCode, stderr).
+    /// </summary>
+    private static (int exitCode, string stderr) RunNetsh(string arguments)
+    {
         var psi = new ProcessStartInfo
         {
             FileName = "netsh.exe",
-            Arguments = $"advfirewall firewall add rule name=\"{ruleName}\" dir=in action=allow protocol=TCP localport={_cfg.AppPort}",
+            Arguments = arguments,
             UseShellExecute = false,
+            CreateNoWindow = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            CreateNoWindow = true,
         };
-        using var proc = Process.Start(psi)!;
-        var stderr = proc.StandardError.ReadToEnd();
-        proc.WaitForExit();
-
-        if (proc.ExitCode != 0)
-            throw new Exception($"No se pudo abrir el puerto {_cfg.AppPort} en el Firewall.\n{stderr}");
-
-        Log($"  ✓ Puerto {_cfg.AppPort} abierto en Firewall (solo TCP entrante, red local).", LogLevel.Ok);
+        using var p = Process.Start(psi)!;
+        var stderr = p.StandardError.ReadToEnd();
+        p.WaitForExit();
+        return (p.ExitCode, stderr);
     }
 
     // ── Windows service ───────────────────────────────────────────────────────
@@ -895,12 +911,12 @@ public class Step5_Install : IWizardStep
     private int CountSteps()
     {
         int n = 9;
-        if (_cfg.IsUpdateMode && _cfg.InstallAsService) n++;
-        if (_cfg.RestoreDatabaseOnInstall) n++;
-        if (_cfg.InstallAsService) n++;
-        if (_cfg.EnableBackups) n++;
-        if (_cfg.OpenFirewallPort) n++;
-        return n;
+        if (_cfg.IsUpdateMode && _cfg.InstallAsService) n++; // step 4 stop service
+        if (_cfg.RestoreDatabaseOnInstall) n++;               // step 10
+        if (_cfg.EnableBackups) n++;                          // step 11
+        if (_cfg.InstallAsService) n++;                       // step 12
+        if (!_cfg.IsUpdateMode || _cfg.OpenFirewallPort) n++; // step 13 — always fresh, opt-in update
+        return n;                                             // step 14 manifest always counted in base 9
     }
 
     private void TryStopServiceForUpdate()

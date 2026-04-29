@@ -5,8 +5,8 @@ namespace SysCondaWizard;
 
 /// <summary>
 /// Standalone uninstall dialog. Shows health checks for the current installation,
-/// then offers a clean uninstall: stop+delete service, optionally delete files.
-/// Launch via a dedicated "Desinstalar" button in WizardForm or as a separate entry point.
+/// then offers a clean uninstall: stop+delete service, remove firewall rule,
+/// and optionally delete files/backups/config.
 /// </summary>
 public class UninstallForm : Form
 {
@@ -19,7 +19,6 @@ public class UninstallForm : Form
     private Panel _actionsPanel = new();
     private bool _running;
 
-    // FIX 1: Track the current click handler so we can remove it cleanly
     private EventHandler? _btnClickHandler;
 
     private static readonly Color Accent = Color.FromArgb(79, 70, 229);
@@ -28,7 +27,6 @@ public class UninstallForm : Form
     {
         _cfg = cfg;
         InitializeForm();
-        // RunHealthCheck();
         Load += (_, _) => RunHealthCheck();
     }
 
@@ -136,11 +134,9 @@ public class UninstallForm : Form
         };
         _btnUninstall.FlatAppearance.BorderColor = Color.FromArgb(180, 30, 30);
 
-        // FIX 1: Store the handler reference so we can remove it later
         _btnClickHandler = async (_, _) => await RunUninstallAsync();
         _btnUninstall.Click += _btnClickHandler;
 
-        // Stack controls bottom-up (DockStyle.Top stacks top-down in reverse add order)
         _actionsPanel.Controls.Add(_btnUninstall);
         _actionsPanel.Controls.Add(_chkDeleteConfig);
         _actionsPanel.Controls.Add(_chkDeleteBackups);
@@ -159,7 +155,6 @@ public class UninstallForm : Form
     {
         Log("═══ Verificación del sistema ═══\n", LogLevel.Header);
 
-        // Config file
         var cfgExists = File.Exists(_cfg.InstallConfigPath) || File.Exists(WizardConfig.LegacyConfigFilePath);
         Log($"  Config wizard   : {_cfg.InstallConfigPath}", File.Exists(_cfg.InstallConfigPath) ? LogLevel.Ok : LogLevel.Warn);
         if (File.Exists(WizardConfig.LegacyConfigFilePath))
@@ -167,36 +162,35 @@ public class UninstallForm : Form
         if (!cfgExists)
             Log("    ⚠ No se encontró config guardada — puede que nunca se instaló.", LogLevel.Warn);
 
-        // Root dir
         var rootExists = Directory.Exists(_cfg.RootDirectory);
         Log($"  Raíz            : {_cfg.RootDirectory}  [{(rootExists ? "existe" : "no existe")}]",
             rootExists ? LogLevel.Ok : LogLevel.Warn);
 
-        // App dir
         var appExists = Directory.Exists(_cfg.AppDirectory);
         Log($"  App             : {_cfg.AppDirectory}  [{(appExists ? "existe" : "no existe")}]",
             appExists ? LogLevel.Ok : LogLevel.Warn);
 
-        // Runtime exe
         var runtimeExe = Path.Combine(_cfg.ServiceRuntimeDirectory,
             Path.GetFileName(Application.ExecutablePath));
         var runtimeExists = File.Exists(runtimeExe);
         Log($"  Runtime         : {runtimeExe}  [{(runtimeExists ? "existe" : "no existe")}]",
             runtimeExists ? LogLevel.Ok : LogLevel.Warn);
 
-        // Service status
         Log($"\n  Servicio Windows: '{_cfg.ServiceName}'", LogLevel.Info);
         var (svcState, svcOk) = GetServiceState(_cfg.ServiceName);
         Log($"    Estado        : {svcState}", svcOk ? LogLevel.Ok : LogLevel.Warn);
 
-        // Backup dir
+        // Firewall rule check
+        var fwActive = FirewallRuleExists(_cfg.AppPort);
+        Log($"\n  Regla Firewall  : puerto {_cfg.AppPort}  [{(fwActive ? "activa" : "no encontrada")}]",
+            fwActive ? LogLevel.Ok : LogLevel.Warn);
+
         var backupExists = Directory.Exists(_cfg.BackupDirectory);
         var dumpCount = backupExists
             ? Directory.GetFiles(_cfg.BackupDirectory, "*.dump").Length : 0;
         Log($"\n  Backups         : {_cfg.BackupDirectory}", LogLevel.Info);
         Log($"    Dumps encontrados: {dumpCount}", dumpCount > 0 ? LogLevel.Ok : LogLevel.Warn);
 
-        // PgDump
         var pgOk = File.Exists(_cfg.PgDumpPath);
         Log($"\n  pg_dump.exe     : {_cfg.PgDumpPath}  [{(pgOk ? "encontrado" : "no encontrado")}]",
             pgOk ? LogLevel.Ok : LogLevel.Warn);
@@ -219,6 +213,25 @@ public class UninstallForm : Form
         {
             return ("No instalado", false);
         }
+    }
+
+    /// <summary>Checks whether the wizard's firewall rule exists (no window).</summary>
+    private static bool FirewallRuleExists(string port)
+    {
+        var ruleName = $"{AppProfile.ServiceDisplay} Port {port}";
+        var psi = new ProcessStartInfo
+        {
+            FileName = "netsh.exe",
+            Arguments = $"advfirewall firewall show rule name=\"{ruleName}\"",
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        using var p = Process.Start(psi)!;
+        var output = p.StandardOutput.ReadToEnd();
+        p.WaitForExit();
+        return p.ExitCode == 0 && output.Contains("Rule Name", StringComparison.OrdinalIgnoreCase);
     }
 
     // ── Uninstall ─────────────────────────────────────────────────────────────
@@ -246,13 +259,16 @@ public class UninstallForm : Form
 
         await Task.Run(() =>
         {
-            // 1. Stop and delete service
+            // 1. Stop and delete Windows service
             StopAndDeleteService(_cfg.ServiceName);
 
-            // 2. Wait for process to fully release files
+            // 2. Remove firewall rule (always — was set during install)
+            RemoveFirewallRule(_cfg.AppPort);
+
+            // 3. Wait for process to fully release files
             Thread.Sleep(2000);
 
-            // 3. Delete files if requested
+            // 4. Delete files if requested
             if (deleteFiles)
                 DeleteDirectory(_cfg.AppDirectory, "App");
             if (deleteFiles)
@@ -265,7 +281,7 @@ public class UninstallForm : Form
             if (deleteBackups)
                 DeleteDirectory(_cfg.BackupDirectory, "Backups");
 
-            // 4. Try root dir if now empty
+            // 5. Try root dir if now empty
             if (deleteFiles && Directory.Exists(_cfg.RootDirectory))
             {
                 try
@@ -286,7 +302,7 @@ public class UninstallForm : Form
                 }
             }
 
-            // 5. Delete config
+            // 6. Delete config
             if (deleteConfig)
             {
                 try
@@ -308,13 +324,10 @@ public class UninstallForm : Form
         Log("  ✅  Desinstalación completada", LogLevel.Ok);
         Log("══════════════════════════════════════════", LogLevel.Ok);
 
-        // FIX 2: Properly swap the button — remove old handler, hide options panel, wire Close
         RunOnUi(this, () =>
         {
-            // Hide checkboxes and options — nothing left to configure
             _actionsPanel.Visible = false;
 
-            // Remove the uninstall handler and wire the close handler
             if (_btnClickHandler is not null)
             {
                 _btnUninstall.Click -= _btnClickHandler;
@@ -325,8 +338,6 @@ public class UninstallForm : Form
             _btnUninstall.FlatAppearance.BorderColor = Color.FromArgb(40, 120, 60);
             _btnUninstall.Enabled = true;
             _btnUninstall.Click += (_, _) => Close();
-
-            // Show the button standalone at the bottom of the form
             _btnUninstall.Dock = DockStyle.Bottom;
             Controls.Add(_btnUninstall);
         });
@@ -334,7 +345,8 @@ public class UninstallForm : Form
         _running = false;
     }
 
-    // FIX 3: Single service per build — accepts name as param for clarity/extensibility
+    // ── Service ───────────────────────────────────────────────────────────────
+
     private void StopAndDeleteService(string serviceName)
     {
         Log($"  Deteniendo servicio '{serviceName}'...", LogLevel.Info);
@@ -346,7 +358,7 @@ public class UninstallForm : Form
                 sc.Stop();
                 sc.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(15));
             }
-            Log($"  ✓ Servicio detenido.", LogLevel.Ok);
+            Log("  ✓ Servicio detenido.", LogLevel.Ok);
         }
         catch (Exception ex)
         {
@@ -357,13 +369,45 @@ public class UninstallForm : Form
         try
         {
             RunSc("delete", serviceName);
-            Log($"  ✓ Servicio eliminado.", LogLevel.Ok);
+            Log("  ✓ Servicio eliminado.", LogLevel.Ok);
         }
         catch (Exception ex)
         {
             Log($"  ! Delete: {ex.Message}", LogLevel.Warn);
         }
     }
+
+    // ── Firewall ──────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Removes the firewall rule created during install.
+    /// Uses netsh with CreateNoWindow=true — no cmd or terminal window ever appears.
+    /// Non-fatal: if the rule was already gone, logs a warning and continues.
+    /// </summary>
+    private void RemoveFirewallRule(string port)
+    {
+        var ruleName = $"{AppProfile.ServiceDisplay} Port {port}";
+        Log($"  Eliminando regla de Firewall (puerto {port})...", LogLevel.Info);
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = "netsh.exe",
+            Arguments = $"advfirewall firewall delete rule name=\"{ruleName}\"",
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        using var p = Process.Start(psi)!;
+        p.WaitForExit();
+
+        if (p.ExitCode == 0)
+            Log($"  ✓ Regla de Firewall eliminada (puerto {port}).", LogLevel.Ok);
+        else
+            Log($"  ! Regla de Firewall no encontrada o ya eliminada (puerto {port}).", LogLevel.Warn);
+    }
+
+    // ── File helpers ──────────────────────────────────────────────────────────
 
     private void DeleteDirectory(string path, string label)
     {
@@ -401,15 +445,16 @@ public class UninstallForm : Form
             throw new Exception($"sc.exe {string.Join(" ", args)} falló (código {p.ExitCode})");
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    // ── UI helpers ────────────────────────────────────────────────────────────
 
     private static string BuildConfirmMessage(bool files, bool backups, bool config)
     {
         var lines = new List<string> { "¿Confirmar desinstalación?\n" };
         lines.Add("  • Detener y eliminar el servicio de Windows");
-        if (files) lines.Add($"  • Eliminar archivos de instalación");
-        if (backups) lines.Add($"  • ⚠  ELIMINAR TODOS LOS BACKUPS");
-        if (config) lines.Add($"  • Eliminar configuración guardada");
+        lines.Add("  • Eliminar regla de Firewall del puerto de la app");
+        if (files) lines.Add("  • Eliminar archivos de instalación");
+        if (backups) lines.Add("  • ⚠  ELIMINAR TODOS LOS BACKUPS");
+        if (config) lines.Add("  • Eliminar configuración guardada");
         lines.Add("\nEsta acción no se puede deshacer.");
         return string.Join("\n", lines);
     }
@@ -426,8 +471,6 @@ public class UninstallForm : Form
 
     private void Log(string text, LogLevel level)
     {
-        // FIX 4: Check IsDisposed inside a try/catch to eliminate the race condition
-        // between the background thread check and the UI thread Invoke call.
         RunOnUi(_log, () =>
         {
             Color clr = level switch
@@ -446,8 +489,6 @@ public class UninstallForm : Form
         });
     }
 
-    // FIX 4: Wrap the entire Invoke in try/catch — the only safe way to handle
-    // the race where the form is disposed between IsDisposed check and Invoke().
     private static void RunOnUi(Control c, Action a)
     {
         try
@@ -458,7 +499,7 @@ public class UninstallForm : Form
             else
                 a();
         }
-        catch (ObjectDisposedException) { /* form closed mid-operation — safe to ignore */ }
-        catch (InvalidOperationException) { /* handle destroyed mid-invoke — safe to ignore */ }
+        catch (ObjectDisposedException) { }
+        catch (InvalidOperationException) { }
     }
 }
