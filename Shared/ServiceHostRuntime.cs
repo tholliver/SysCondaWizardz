@@ -145,7 +145,7 @@ internal sealed class BunWindowsService : ServiceBase
             }
 
             psi.Environment["NODE_ENV"] = "production";
-            psi.Environment["HOST"] = "0.0.0.0";
+            psi.Environment["HOST"] = _config.BindHost;
             psi.Environment["PORT"] = _config.Port;
 
             _process = new Process { StartInfo = psi, EnableRaisingEvents = true };
@@ -291,6 +291,7 @@ internal sealed class ServiceHostConfig
     public string EnvFilePath { get; set; } = "";
     public string LogDirectory { get; set; } = "";
     public string Port { get; set; } = "4321";
+    public string BindHost { get; set; } = "127.0.0.1";
     public int RestartDelaySeconds { get; set; } = 5;
 }
 

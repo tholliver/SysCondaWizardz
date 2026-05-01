@@ -176,6 +176,10 @@ public class UninstallForm : Form
         Log($"  Runtime         : {runtimeExe}  [{(runtimeExists ? "existe" : "no existe")}]",
             runtimeExists ? LogLevel.Ok : LogLevel.Warn);
 
+        var toolsExists = Directory.Exists(_cfg.ToolsDirectory);
+        Log($"  Herramientas    : {_cfg.ToolsDirectory}  [{(toolsExists ? "existe" : "no existe")}]",
+            toolsExists ? LogLevel.Ok : LogLevel.Warn);
+
         Log($"\n  Servicio Windows: '{_cfg.ServiceName}'", LogLevel.Info);
         var (svcState, svcOk) = GetServiceState(_cfg.ServiceName);
         Log($"    Estado        : {svcState}", svcOk ? LogLevel.Ok : LogLevel.Warn);
@@ -184,6 +188,9 @@ public class UninstallForm : Form
         var fwActive = FirewallRuleExists(_cfg.AppPort);
         Log($"\n  Regla Firewall  : puerto {_cfg.AppPort}  [{(fwActive ? "activa" : "no encontrada")}]",
             fwActive ? LogLevel.Ok : LogLevel.Warn);
+        var urlAclActive = UrlAclExists(_cfg.AppPort);
+        Log($"  URL reservation : http://+:{_cfg.AppPort}/  [{(urlAclActive ? "activa" : "no encontrada")}]",
+            urlAclActive ? LogLevel.Ok : LogLevel.Warn);
 
         var backupExists = Directory.Exists(_cfg.BackupDirectory);
         var dumpCount = backupExists
@@ -234,6 +241,23 @@ public class UninstallForm : Form
         return p.ExitCode == 0 && output.Contains("Rule Name", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool UrlAclExists(string port)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "netsh.exe",
+            Arguments = "http show urlacl",
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        using var p = Process.Start(psi)!;
+        var output = p.StandardOutput.ReadToEnd();
+        p.WaitForExit();
+        return p.ExitCode == 0 && output.Contains($"http://+:{port}/", StringComparison.OrdinalIgnoreCase);
+    }
+
     // ── Uninstall ─────────────────────────────────────────────────────────────
 
     private async Task RunUninstallAsync()
@@ -277,6 +301,12 @@ public class UninstallForm : Form
                 DeleteDirectory(_cfg.ServiceLogDirectory, "Logs");
             if (deleteFiles)
                 DeleteDirectory(_cfg.ServiceRuntimeDirectory, "Runtime");
+            if (deleteFiles)
+                DeleteDirectory(_cfg.ToolsDirectory, "Herramientas");
+            if (deleteFiles)
+                DeleteToolShortcut($"{_cfg.ServiceName}-health.cmd");
+            if (deleteFiles)
+                DeleteToolShortcut($"{_cfg.ServiceName}-uninstall.cmd");
 
             if (deleteBackups)
                 DeleteDirectory(_cfg.BackupDirectory, "Backups");
@@ -387,12 +417,25 @@ public class UninstallForm : Form
     private void RemoveFirewallRule(string port)
     {
         var ruleName = $"{AppProfile.ServiceDisplay} Port {port}";
-        Log($"  Eliminando regla de Firewall (puerto {port})...", LogLevel.Info);
+        Log($"  Eliminando regla de Firewall y URL reservation (puerto {port})...", LogLevel.Info);
 
+        var firewallExit = RunNetsh($"advfirewall firewall delete rule name=\"{ruleName}\"");
+        RunNetsh($"http delete urlacl url=http://+:{port}/");
+
+        if (firewallExit == 0)
+            Log($"  ✓ Regla de Firewall eliminada (puerto {port}).", LogLevel.Ok);
+        else
+            Log($"  ! Regla de Firewall no encontrada o ya eliminada (puerto {port}).", LogLevel.Warn);
+
+        Log($"  ✓ URL reservation limpiada si existía: http://+:{port}/", LogLevel.Ok);
+    }
+
+    private static int RunNetsh(string arguments)
+    {
         var psi = new ProcessStartInfo
         {
             FileName = "netsh.exe",
-            Arguments = $"advfirewall firewall delete rule name=\"{ruleName}\"",
+            Arguments = arguments,
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardOutput = true,
@@ -400,11 +443,7 @@ public class UninstallForm : Form
         };
         using var p = Process.Start(psi)!;
         p.WaitForExit();
-
-        if (p.ExitCode == 0)
-            Log($"  ✓ Regla de Firewall eliminada (puerto {port}).", LogLevel.Ok);
-        else
-            Log($"  ! Regla de Firewall no encontrada o ya eliminada (puerto {port}).", LogLevel.Warn);
+        return p.ExitCode;
     }
 
     // ── File helpers ──────────────────────────────────────────────────────────
@@ -451,7 +490,7 @@ public class UninstallForm : Form
     {
         var lines = new List<string> { "¿Confirmar desinstalación?\n" };
         lines.Add("  • Detener y eliminar el servicio de Windows");
-        lines.Add("  • Eliminar regla de Firewall del puerto de la app");
+        lines.Add("  • Eliminar regla de Firewall y URL reservation del puerto de la app");
         if (files) lines.Add("  • Eliminar archivos de instalación");
         if (backups) lines.Add("  • ⚠  ELIMINAR TODOS LOS BACKUPS");
         if (config) lines.Add("  • Eliminar configuración guardada");
@@ -461,6 +500,23 @@ public class UninstallForm : Form
 
     private void ShowActions() =>
         RunOnUi(this, () => _actionsPanel.Visible = true);
+
+    private void DeleteToolShortcut(string fileName)
+    {
+        var path = Path.Combine(_cfg.RootDirectory, fileName);
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+                Log($"  ✓ Acceso directo eliminado: {path}", LogLevel.Ok);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log($"  ! No se pudo eliminar acceso directo {path}: {ex.Message}", LogLevel.Warn);
+        }
+    }
 
     private bool Confirm(string msg) =>
         MessageBox.Show(msg, "Confirmar desinstalación",

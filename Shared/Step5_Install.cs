@@ -182,14 +182,10 @@ public class Step5_Install : IWizardStep
                 Tick();
             }
 
-            // 13 ── Firewall rule ─────────────────────────────────────────
-            // Service installs must be reachable from the LAN after updates too.
-            if (ShouldConfigureFirewall())
-            {
-                Log($"\n[13/x] Abriendo puerto {_cfg.AppPort} en el Firewall...", LogLevel.Step);
-                OpenFirewallPort();
-                Tick();
-            }
+            // 13 ── Network access ────────────────────────────────────────
+            Log($"\n[13/x] Configurando acceso de red...", LogLevel.Step);
+            ConfigureNetworkAccess();
+            Tick();
 
             Log("\n[14/x] Registrando manifiesto de release...", LogLevel.Step);
             WriteReleaseManifest();
@@ -214,7 +210,10 @@ public class Step5_Install : IWizardStep
                 ?.Address.ToString() ?? "localhost";
 
             Log($"\n  Accede localmente en : http://localhost:{_cfg.AppPort}/", LogLevel.Info);
-            Log($"  Accede en la red en  : http://{lanIp}:{_cfg.AppPort}/", LogLevel.Info);
+            if (_cfg.ExposeAppToNetwork)
+                Log($"  Accede en la red en  : http://{lanIp}:{_cfg.AppPort}/", LogLevel.Info);
+            else
+                Log("  Acceso desde la red  : desactivado", LogLevel.Info);
             Log($"  Raíz de instalación: {_cfg.RootDirectory}", LogLevel.Info);
             if (_cfg.InstallAsService)
                 Log($"\n  Servicio '{_cfg.ServiceName}': sc start {_cfg.ServiceName}", LogLevel.Info);
@@ -644,14 +643,21 @@ public class Step5_Install : IWizardStep
         _ => "desconocido"
     };
 
-    // ── Firewall rule ─────────────────────────────────────────────────────────
+    // ── Network exposure ──────────────────────────────────────────────────────
     // Uses netsh via RunProcessCaptureAsync — CreateNoWindow = true, no cmd window ever.
-    // Called on every service install/update so LAN access remains consistent.
-    // Also called on non-service fresh installs, or if the user explicitly asks for it.
     // The delete pass runs first so re-installs are always idempotent.
 
-    private bool ShouldConfigureFirewall() =>
-        _cfg.InstallAsService || !_cfg.IsUpdateMode || _cfg.OpenFirewallPort;
+    private void ConfigureNetworkAccess()
+    {
+        if (_cfg.ExposeAppToNetwork)
+        {
+            OpenFirewallPort();
+            return;
+        }
+
+        RemoveNetworkExposure(_cfg.AppPort);
+        Log($"  ✓ Acceso de red desactivado. La app escuchará en {_cfg.AppBindHost}:{_cfg.AppPort}.", LogLevel.Ok);
+    }
 
     private void OpenFirewallPort()
     {
@@ -678,6 +684,12 @@ public class Step5_Install : IWizardStep
             Log($"  ⚠ No se pudo registrar urlacl para {url} (puede requerir modo admin): {urlErr}", LogLevel.Warn);
         else
             Log($"  ✓ URL reservation registrada: {url}", LogLevel.Ok);
+    }
+
+    private static void RemoveNetworkExposure(string port)
+    {
+        RunNetsh($"advfirewall firewall delete rule name=\"{FirewallRuleName(port)}\"");
+        RunNetsh($"http delete urlacl url=http://+:{port}/");
     }
 
     /// <summary>
@@ -737,6 +749,7 @@ public class Step5_Install : IWizardStep
             EnvFilePath = Path.Combine(_cfg.AppDirectory, ".env"),
             LogDirectory = _cfg.ServiceLogDirectory,
             Port = _cfg.AppPort,
+            BindHost = _cfg.AppBindHost,
             RestartDelaySeconds = _cfg.ServiceRestartDelaySeconds,
         };
 
@@ -793,7 +806,56 @@ public class Step5_Install : IWizardStep
                 ? $"  ✓ Runtime ya en uso desde {deployedExe}"
                 : $"  ✓ Runtime desplegado en {deployedExe}",
             LogLevel.Ok);
+
+        DeployInstallTools(sourceDir);
         return deployedExe;
+    }
+
+    private void DeployInstallTools(string sourceDir)
+    {
+        Directory.CreateDirectory(_cfg.ToolsDirectory);
+
+        foreach (var file in Directory.GetFiles(sourceDir))
+        {
+            var targetPath = Path.Combine(_cfg.ToolsDirectory, Path.GetFileName(file));
+            if (string.Equals(Path.GetFullPath(file), Path.GetFullPath(targetPath), StringComparison.OrdinalIgnoreCase))
+                continue;
+            File.Copy(file, targetPath, overwrite: true);
+        }
+
+        var sourceExe = Application.ExecutablePath;
+        var healthExe = Path.Combine(_cfg.ToolsDirectory, $"{_cfg.ServiceName}-health.exe");
+        var uninstallExe = Path.Combine(_cfg.ToolsDirectory, $"{_cfg.ServiceName}-uninstall.exe");
+        File.Copy(sourceExe, healthExe, overwrite: true);
+        File.Copy(sourceExe, uninstallExe, overwrite: true);
+
+        var mainExe = Path.Combine(_cfg.ToolsDirectory, Path.GetFileName(sourceExe));
+        File.WriteAllText(
+            Path.Combine(_cfg.RootDirectory, $"{_cfg.ServiceName}-health.cmd"),
+            "@echo off\r\n" +
+            "setlocal\r\n" +
+            $"set \"TOOL={mainExe}\"\r\n" +
+            "if not exist \"%TOOL%\" (\r\n" +
+            "  echo Health tool not found:\r\n" +
+            "  echo   %TOOL%\r\n" +
+            "  echo.\r\n" +
+            "  pause\r\n" +
+            "  exit /b 1\r\n" +
+            ")\r\n" +
+            "\"%TOOL%\" --health %*\r\n" +
+            "set \"EXITCODE=%ERRORLEVEL%\"\r\n" +
+            "echo.\r\n" +
+            "if not \"%EXITCODE%\"==\"0\" echo Health check exited with code %EXITCODE%.\r\n" +
+            "echo Press any key to close this window...\r\n" +
+            "pause >nul\r\n" +
+            "exit /b %EXITCODE%\r\n");
+        File.WriteAllText(
+            Path.Combine(_cfg.RootDirectory, $"{_cfg.ServiceName}-uninstall.cmd"),
+            $"@echo off\r\n\"{mainExe}\" --uninstall %*\r\n");
+
+        Log($"  ✓ Herramientas instaladas en {_cfg.ToolsDirectory}", LogLevel.Ok);
+        Log($"    - {healthExe}", LogLevel.Info);
+        Log($"    - {uninstallExe}", LogLevel.Info);
     }
 
     private void TryStopAndDeleteService(string name)
@@ -976,7 +1038,7 @@ public class Step5_Install : IWizardStep
         if (_cfg.RestoreDatabaseOnInstall) n++;               // step 10
         if (_cfg.EnableBackups) n++;                          // step 11
         if (_cfg.InstallAsService) n++;                       // step 12
-        if (ShouldConfigureFirewall()) n++;                   // step 13
+        n++;                                                  // step 13 network access
         if (_cfg.InstallAsService) n++;                       // step 15 start + port verification
         return n;                                             // step 14 manifest always counted in base 9
     }

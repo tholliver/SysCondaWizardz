@@ -9,20 +9,43 @@ static class Program
     [System.Runtime.InteropServices.DllImport("kernel32.dll")]
     static extern bool AttachConsole(int dwProcessId);
 
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    static extern bool AllocConsole();
+
+    private static bool _consoleReady;
+
     [STAThread]
     static void Main(string[] args)
     {
         if (args.Length > 0)
         {
-            AttachConsole(-1);
+            EnsureConsole();
         }
 
         if (ServiceHostRuntime.TryRun(args))
             return;
 
-        if (args.Length > 0 && args[0] == "--status")
+        if (IsCommand(args, "status") || IsCommand(args, "health") || IsLaunchedAs("health"))
         {
+            EnsureConsole();
             PrintStatus();
+            return;
+        }
+
+        if (IsCommand(args, "uninstall") || IsLaunchedAs("uninstall"))
+        {
+            ApplicationConfiguration.Initialize();
+            if (!IsAdministrator())
+            {
+                MessageBox.Show(
+                    "El desinstalador requiere permisos de administrador.\n\nEjecuta la herramienta como Administrador.",
+                    $"{AppProfile.AppName} — Uninstall",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
+            Application.Run(new UninstallForm(WizardConfig.Load()));
             return;
         }
 
@@ -82,6 +105,7 @@ static class Program
         string svcStatus = "not found";
         TimeSpan uptime = TimeSpan.Zero;
         long totalMemMb = 0;
+        int hostPid = 0;
         int bunPid = 0;
         int restarts = 0;
 
@@ -95,10 +119,13 @@ static class Program
             if (svc.Status == ServiceControllerStatus.Running)
             {
                 // Host process memory
-                foreach (var p in Process.GetProcessesByName("SysCondaWizard"))
+                var hostProcessName = Path.GetFileNameWithoutExtension(Application.ExecutablePath);
+                foreach (var p in Process.GetProcessesByName(hostProcessName))
                 {
                     try
                     {
+                        if (p.Id == Environment.ProcessId) continue;
+                        hostPid = p.Id;
                         uptime = DateTime.Now - p.StartTime;
                         totalMemMb += p.WorkingSet64 / 1024 / 1024;
                     }
@@ -202,6 +229,12 @@ static class Program
         string[] backupLog = Array.Empty<string>();
         string[] appLog = Array.Empty<string>();
         string[] errLog = Array.Empty<string>();
+        string tcpState = "closed";
+        string httpState = "not checked";
+        string firewallState = "not found";
+        string urlAclState = "not found";
+        string integrityState = "not checked";
+        string toolsState = "missing";
 
         try
         {
@@ -213,6 +246,43 @@ static class Program
 
             var el = Path.Combine(cfg.ServiceLogDirectory, "service-error.log");
             if (File.Exists(el)) errLog = File.ReadAllLines(el).TakeLast(3).ToArray();
+        }
+        catch { }
+
+        try
+        {
+            using var client = new System.Net.Sockets.TcpClient();
+            var connect = client.ConnectAsync("127.0.0.1", int.Parse(cfg.AppPort));
+            tcpState = connect.Wait(TimeSpan.FromSeconds(2)) && client.Connected ? "open" : "closed";
+        }
+        catch { }
+
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+            using var response = http.GetAsync($"http://127.0.0.1:{cfg.AppPort}/").GetAwaiter().GetResult();
+            httpState = $"{(int)response.StatusCode} {response.ReasonPhrase}";
+        }
+        catch (Exception ex)
+        {
+            httpState = ex.GetType().Name;
+        }
+
+        try { firewallState = NetshContains($"advfirewall firewall show rule name=\"{AppProfile.ServiceDisplay} Port {cfg.AppPort}\"", "Rule Name") ? "present" : "not found"; } catch { }
+        try { urlAclState = NetshContains("http show urlacl", $"http://+:{cfg.AppPort}/") ? "present" : "not found"; } catch { }
+        try
+        {
+            integrityState = AppReleaseManifest.TryVerify(cfg, out _, out var result)
+                ? (result.IsValid ? "ok" : "changed")
+                : "not available";
+        }
+        catch { }
+        try
+        {
+            toolsState = Directory.Exists(cfg.ToolsDirectory)
+                         && Directory.GetFiles(cfg.ToolsDirectory, "*.exe").Length > 0
+                ? "installed"
+                : "missing";
         }
         catch { }
 
@@ -230,22 +300,34 @@ static class Program
 
         Console.WriteLine();
         Console.WriteLine(
-            $"{B}{C}  sys.conda — Process Monitor{Rs}" +
+            $"{B}{C}  {AppProfile.AppName} — Service Health{Rs}" +
             $"                    {Gr}{DateTime.Now:yyyy-MM-dd HH:mm:ss}{Rs}");
         Console.WriteLine($"  {new string('─', 62)}");
 
         // Process table
         Console.WriteLine(
-            $"  {B}{"name",-18} {"status",-10} {"uptime",-12} {"memory",-10} {"pid",-8} {"restarts"}{Rs}");
+            $"  {B}{"name",-18} {"status",-10} {"uptime",-12} {"memory",-10} {"host",-8} {"bun",-8} {"restarts"}{Rs}");
         Console.WriteLine($"  {new string('─', 62)}");
         Console.WriteLine(
             $"  {W}{cfg.ServiceName,-18}{Rs}" +
             $"{svcColor}{B}{svcStatus,-10}{Rs}" +
             $"{uptimeStr,-12}" +
             $"{memStr,-10}" +
+            $"{(hostPid > 0 ? hostPid.ToString() : "-"),-8}" +
             $"{pidStr,-8}" +
             $"{restarts}");
         Console.WriteLine($"  {new string('─', 62)}");
+
+        Console.WriteLine();
+        Console.WriteLine($"  {B}checks{Rs}");
+        Console.WriteLine($"  {new string('─', 62)}");
+        Console.WriteLine($"  {"tcp",-18}{Colorize(tcpState, tcpState == "open", G, R, Rs)}  {Gr}127.0.0.1:{cfg.AppPort}{Rs}");
+        Console.WriteLine($"  {"http",-18}{Colorize(httpState, httpState.StartsWith("2") || httpState.StartsWith("3"), G, Y, Rs)}");
+        Console.WriteLine($"  {"bind",-18}{cfg.AppBindHost}  {Gr}{(cfg.ExposeAppToNetwork ? "network exposed" : "local only")}{Rs}");
+        Console.WriteLine($"  {"firewall",-18}{Colorize(firewallState, firewallState == "present" == cfg.ExposeAppToNetwork, G, Y, Rs)}");
+        Console.WriteLine($"  {"urlacl",-18}{Colorize(urlAclState, urlAclState == "present" == cfg.ExposeAppToNetwork, G, Y, Rs)}");
+        Console.WriteLine($"  {"integrity",-18}{Colorize(integrityState, integrityState == "ok" || integrityState == "not available", G, Y, Rs)}");
+        Console.WriteLine($"  {"tools",-18}{Colorize(toolsState, toolsState == "installed", G, Y, Rs)}  {Gr}{cfg.ToolsDirectory}{Rs}");
 
         // Backup table
         Console.WriteLine();
@@ -299,6 +381,49 @@ static class Program
         Console.WriteLine();
     }
 
+    static bool IsCommand(string[] args, string command) =>
+        args.Any(a => string.Equals(a, "--" + command, StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(a, "/" + command, StringComparison.OrdinalIgnoreCase));
+
+    static bool IsLaunchedAs(string toolName)
+    {
+        try
+        {
+            var exe = Path.GetFileNameWithoutExtension(Environment.ProcessPath ?? "");
+            return exe.Contains(toolName, StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    static string Colorize(string text, bool ok, string okColor, string warnColor, string reset) =>
+        $"{(ok ? okColor : warnColor)}{text}{reset}";
+
+    static bool NetshContains(string arguments, string text)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "netsh.exe",
+            Arguments = arguments,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        using var p = Process.Start(psi)!;
+        var output = p.StandardOutput.ReadToEnd();
+        p.WaitForExit();
+        return p.ExitCode == 0 && output.Contains(text, StringComparison.OrdinalIgnoreCase);
+    }
+
+    static void EnsureConsole()
+    {
+        if (_consoleReady) return;
+        _consoleReady = AttachConsole(-1) || AllocConsole();
+    }
+
     static bool IsAdministrator()
     {
         using var identity = WindowsIdentity.GetCurrent();
@@ -306,4 +431,3 @@ static class Program
         return principal.IsInRole(WindowsBuiltInRole.Administrator);
     }
 }
-

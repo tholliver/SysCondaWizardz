@@ -45,6 +45,12 @@ public class WizardConfig
     public bool InstallAsService { get; set; } = true;
     public int ServiceRestartDelaySeconds { get; set; } = 5;
     public bool OpenFirewallPort { get; set; } = false;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool ExposeAppToNetwork
+    {
+        get => OpenFirewallPort;
+        set => OpenFirewallPort = value;
+    }
 
     // ── Step 4: Backup ───────────────────────────────────────────────────────
     public bool EnableBackups { get; set; } = true;
@@ -66,9 +72,11 @@ public class WizardConfig
     public string ServiceConfigPath => Path.Combine(ServiceRuntimeDirectory, "service-config.json");
     public string ServiceLogDirectory => Path.Combine(RootDirectory, "logs");
     public string BackupDirectory => Path.Combine(RootDirectory, "backups");
+    public string ToolsDirectory => Path.Combine(RootDirectory, "tools");
     public string InstallConfigPath => GetInstallConfigPath(RootDirectory);
     public string ReleaseManifestPath => Path.Combine(RootDirectory, "app-release.json");
     public bool IsUpdateMode => Mode == InstallMode.Update;
+    public string AppBindHost => ExposeAppToNetwork ? "0.0.0.0" : "127.0.0.1";
 
     // ── Env file ─────────────────────────────────────────────────────────────
     public string DatabaseUrl =>

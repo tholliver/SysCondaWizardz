@@ -4,7 +4,7 @@ public class Step3_Service : IWizardStep
 {
     public string Title => "Servicio";
 
-    private CheckBox _chkFirewall = new();
+    private CheckBox _chkExposeToNetwork = new();
 
     public Control BuildUI(WizardConfig cfg)
     {
@@ -13,18 +13,18 @@ public class Step3_Service : IWizardStep
         WizardUi.SectionLabel(root, "Servicio de Windows");
         WizardUi.Hint(root, "La aplicación se instalará como servicio de Windows con inicio automático.");
 
-        _chkFirewall = new CheckBox
+        _chkExposeToNetwork = new CheckBox
         {
-            Text = $"Abrir puerto {cfg.AppPort} en el Firewall de Windows (acceso desde red local)",
-            Checked = cfg.OpenFirewallPort,
+            Text = $"Exponer la app a la red local en el puerto {cfg.AppPort}",
+            Checked = cfg.ExposeAppToNetwork,
             AutoSize = true,
             Margin = new Padding(0, 8, 0, 4),
         };
-        WizardUi.AddRow(root, _chkFirewall);
+        WizardUi.AddRow(root, _chkExposeToNetwork);
 
         WizardUi.Hint(root,
-            "Opcional. Permite acceder a la app desde otros dispositivos en la misma red.\n" +
-            "Solo abre el puerto de la app — no compromete la seguridad del equipo.");
+            "Opcional. Si está activo, el servicio escucha en todas las interfaces y el instalador crea la regla de Firewall.\n" +
+            "Si está desactivado, la app queda disponible solo desde este equipo.");
 
         return root;
     }
@@ -37,6 +37,6 @@ public class Step3_Service : IWizardStep
         cfg.ServiceName = AppProfile.ServiceName;
         cfg.ServiceDisplayName = AppProfile.ServiceDisplay;
         cfg.ServiceRestartDelaySeconds = 5;
-        cfg.OpenFirewallPort = _chkFirewall.Checked; // 👈 save checkbox state
+        cfg.ExposeAppToNetwork = _chkExposeToNetwork.Checked;
     }
 }
